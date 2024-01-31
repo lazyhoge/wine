@@ -1894,6 +1894,7 @@ static NTSTATUS wg_parser_connect(void *args)
     const struct wg_parser_connect_params *params = args;
     struct wg_parser *parser = get_parser(params->parser);
     const WCHAR *uri = params->uri;
+    GstClock *clock;
     unsigned int i;
     int ret;
 
@@ -1930,7 +1931,8 @@ static NTSTATUS wg_parser_connect(void *args)
     gst_pad_set_event_function(parser->my_src, src_event_cb);
     gst_pad_set_element_private(parser->my_src, parser);
 
-    gst_element_set_clock(parser->container, gst_system_clock_obtain());
+    clock = gst_system_clock_obtain();
+    gst_element_set_clock(parser->container, clock);
 
     parser->start_offset = parser->next_offset = parser->stop_offset = 0;
     parser->next_pull_offset = 0;
@@ -1939,6 +1941,7 @@ static NTSTATUS wg_parser_connect(void *args)
     if (!decodebin_parser_init_gst(parser))
         goto out;
 
+    gst_element_set_base_time(parser->container, gst_clock_get_time(clock));
     gst_element_set_state(parser->container, GST_STATE_PAUSED);
     ret = gst_element_get_state(parser->container, NULL, NULL, -1);
 
