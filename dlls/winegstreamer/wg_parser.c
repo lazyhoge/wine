@@ -1260,6 +1260,10 @@ static bool stream_create_post_processing_elements(GstPad *pad, struct wg_parser
         if (!(element = create_element("gldownload", "base"))
                 || !append_element(parser->container, element, &first, &last))
             return false;
+        /* Input resolution may not match requested resolution. */
+        if (!(element = create_element("videoscale", "base"))
+                || !append_element(parser->container, element, &first, &last))
+            return false;
 
         if (!link_src_to_element(pad, first) || !link_element_to_sink(last, stream->my_sink))
             return false;
@@ -1343,6 +1347,11 @@ static bool stream_create_post_processing_elements(GstPad *pad, struct wg_parser
 
         /* Let GStreamer choose a default number of threads. */
         gst_util_set_object_arg(G_OBJECT(element), "n-threads", "0");
+
+        /* Input resolution may not match requested resolution. */
+        if (!(element = create_element("videoscale", "base"))
+                || !append_element(parser->container, element, &first, &last))
+            return false;
 
         if (!link_src_to_element(pad, first) || !link_element_to_sink(last, stream->my_sink))
             return false;
