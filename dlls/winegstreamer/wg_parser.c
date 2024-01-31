@@ -1930,6 +1930,8 @@ static NTSTATUS wg_parser_connect(void *args)
     gst_pad_set_event_function(parser->my_src, src_event_cb);
     gst_pad_set_element_private(parser->my_src, parser);
 
+    gst_element_set_clock(parser->container, gst_system_clock_obtain());
+
     parser->start_offset = parser->next_offset = parser->stop_offset = 0;
     parser->next_pull_offset = 0;
     parser->error = false;
