@@ -2195,6 +2195,10 @@ static BOOL decodebin_parser_init_gst(struct wg_parser *parser)
     else
         g_object_set(element, "uri", parser->uri, NULL);
 
+    pthread_mutex_lock(&parser->mutex);
+    parser->no_more_pads = false;
+    pthread_mutex_unlock(&parser->mutex);
+
     g_signal_connect(element, "pad-added", G_CALLBACK(pad_added_cb), parser);
     g_signal_connect(element, "pad-removed", G_CALLBACK(pad_removed_cb), parser);
     g_signal_connect(element, "autoplug-continue", G_CALLBACK(autoplug_continue_cb), parser);
@@ -2203,10 +2207,6 @@ static BOOL decodebin_parser_init_gst(struct wg_parser *parser)
     g_signal_connect(element, "autoplug-sort", G_CALLBACK(autoplug_sort_cb), parser);
     g_signal_connect(element, "no-more-pads", G_CALLBACK(no_more_pads_cb), parser);
     g_signal_connect(element, "deep-element-added", G_CALLBACK(deep_element_added_cb), parser);
-
-    pthread_mutex_lock(&parser->mutex);
-    parser->no_more_pads = false;
-    pthread_mutex_unlock(&parser->mutex);
 
     if (!strcmp(type, "decodebin") && !link_src_to_element(parser->my_src, element))
         return FALSE;
