@@ -1356,6 +1356,10 @@ static bool stream_create_post_processing_elements(GstPad *pad, struct wg_parser
         if (!(element = create_element("audioconvert", "base"))
                 || !append_element(parser->container, element, &first, &last))
             return false;
+        /* Input sample rate may not match requested sample rate. */
+        if (!(element = create_element("audioresample", "base"))
+                || !append_element(parser->container, element, &first, &last))
+            return false;
 
         if (!link_src_to_element(pad, first) || !link_element_to_sink(last, stream->my_sink))
             return false;
