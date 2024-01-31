@@ -1942,9 +1942,9 @@ static NTSTATUS wg_parser_connect(void *args)
         goto out;
 
     gst_element_set_base_time(parser->container, gst_clock_get_time(clock));
-    gst_element_set_state(parser->container, GST_STATE_PAUSED);
-    ret = gst_element_get_state(parser->container, NULL, NULL, -1);
-
+    ret = gst_element_set_state(parser->container, GST_STATE_PAUSED);
+    if (ret == GST_STATE_CHANGE_ASYNC)
+        ret = gst_element_get_state(parser->container, NULL, NULL, -1);
     if (ret == GST_STATE_CHANGE_FAILURE)
     {
         if (!parser->use_mediaconv && !parser->is_web_scheme)
@@ -1959,6 +1959,14 @@ static NTSTATUS wg_parser_connect(void *args)
 
     pthread_mutex_lock(&parser->mutex);
 
+    if (ret == GST_STATE_CHANGE_NO_PREROLL)
+    {
+        ret = gst_element_set_state(parser->container, GST_STATE_PLAYING);
+        if (ret == GST_STATE_CHANGE_ASYNC)
+            ret = gst_element_get_state(parser->container, NULL, NULL, -1);
+        if (ret == GST_STATE_CHANGE_FAILURE)
+            goto out;
+    }
     while (!parser_no_more_pads(parser) && !parser->error)
         pthread_cond_wait(&parser->init_cond, &parser->mutex);
     if (parser->error)
