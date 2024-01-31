@@ -35,6 +35,38 @@ HKLM
                     {
                         val '{587eeb6a-7336-4ebd-a4f2-91c948de622c}' = s 'GStreamer Scheme Handler'
                     }
+                    'rtspu:'
+                    {
+                        val '{587eeb6a-7336-4ebd-a4f2-91c948de622c}' = s 'GStreamer Scheme Handler'
+                    }
+                    'rtspt:'
+                    {
+                        val '{587eeb6a-7336-4ebd-a4f2-91c948de622c}' = s 'GStreamer Scheme Handler'
+                    }
+                    'rtsph:'
+                    {
+                        val '{587eeb6a-7336-4ebd-a4f2-91c948de622c}' = s 'GStreamer Scheme Handler'
+                    }
+                    'rtsp-sdp:'
+                    {
+                        val '{587eeb6a-7336-4ebd-a4f2-91c948de622c}' = s 'GStreamer Scheme Handler'
+                    }
+                    'rtsps:'
+                    {
+                        val '{587eeb6a-7336-4ebd-a4f2-91c948de622c}' = s 'GStreamer Scheme Handler'
+                    }
+                    'rtspsu:'
+                    {
+                        val '{587eeb6a-7336-4ebd-a4f2-91c948de622c}' = s 'GStreamer Scheme Handler'
+                    }
+                    'rtspst:'
+                    {
+                        val '{587eeb6a-7336-4ebd-a4f2-91c948de622c}' = s 'GStreamer Scheme Handler'
+                    }
+                    'rtspsh:'
+                    {
+                        val '{587eeb6a-7336-4ebd-a4f2-91c948de622c}' = s 'GStreamer Scheme Handler'
+                    }
                 }
             }
         }
