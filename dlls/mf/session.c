@@ -187,6 +187,13 @@ enum topo_node_flags
     TOPO_NODE_END_OF_STREAM = 0x1,
     TOPO_NODE_SCRUB_SAMPLE_COMPLETE = 0x2,
     TOPO_NODE_MARKIN_HERE = 0x4,
+    TOPO_NODE_HAS_WAITED_FOR_PTS = 0x8,
+};
+
+struct sample
+{
+    struct list entry;
+    IMFSample *sample;
 };
 
 struct topo_node
@@ -212,6 +219,9 @@ struct topo_node
         {
             IMFMediaSource *source;
             DWORD stream_id;
+            MFWORKITEM_KEY cancel_key;
+            struct list samples;
+            IMFAsyncCallback timer_callback;
         } source;
         struct
         {
@@ -345,6 +355,11 @@ static struct media_session *impl_session_from_IMFTopologyNodeAttributeEditor(IM
 static struct session_op *impl_op_from_IUnknown(IUnknown *iface)
 {
     return CONTAINING_RECORD(iface, struct session_op, IUnknown_iface);
+}
+
+static struct topo_node *impl_node_from_IMFAsyncCallback(IMFAsyncCallback *iface)
+{
+    return CONTAINING_RECORD(iface, struct topo_node, u.source.timer_callback);
 }
 
 static struct topo_node *impl_node_from_IMFVideoSampleAllocatorNotify(IMFVideoSampleAllocatorNotify *iface)
@@ -795,6 +810,29 @@ static void transform_stream_drop_events(struct transform_stream *stream)
         IMFMediaEvent_Release(event);
 }
 
+static HRESULT topo_node_sourcestream_pop_sample(struct topo_node *source_node, IMFSample **sample)
+{
+    struct sample *entry;
+    struct list *ptr;
+
+    if (!(ptr = list_head(&source_node->u.source.samples)))
+        return MF_E_TRANSFORM_NEED_MORE_INPUT;
+
+    entry = LIST_ENTRY(ptr, struct sample, entry);
+    list_remove(&entry->entry);
+    *sample = entry->sample;
+    free(entry);
+    return S_OK;
+}
+
+static void topo_node_sourcestream_drop_samples(struct topo_node *source_node)
+{
+    IMFSample *sample;
+
+    while (SUCCEEDED(topo_node_sourcestream_pop_sample(source_node, &sample)))
+        IMFSample_Release(sample);
+}
+
 static void release_topo_node(struct topo_node *node)
 {
     unsigned int i;
@@ -804,6 +842,9 @@ static void release_topo_node(struct topo_node *node)
         case MF_TOPOLOGY_SOURCESTREAM_NODE:
             if (node->u.source.source)
                 IMFMediaSource_Release(node->u.source.source);
+            topo_node_sourcestream_drop_samples(node);
+            if (node->u.source.cancel_key)
+                MFCancelWorkItem(node->u.source.cancel_key);
             break;
         case MF_TOPOLOGY_TRANSFORM_NODE:
             for (i = 0; i < node->u.transform.input_count; ++i)
@@ -1949,6 +1990,68 @@ static HRESULT session_get_stream_sink_type(IMFStreamSink *sink, IMFMediaType **
     return hr;
 }
 
+static HRESULT WINAPI node_timer_callback_QueryInterface(IMFAsyncCallback *iface,
+        REFIID riid, void **obj)
+{
+    if (IsEqualIID(riid, &IID_IMFAsyncCallback) ||
+            IsEqualIID(riid, &IID_IUnknown))
+    {
+        *obj = iface;
+        IMFAsyncCallback_AddRef(iface);
+        return S_OK;
+    }
+
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI node_timer_callback_AddRef(IMFAsyncCallback *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI node_timer_callback_Release(IMFAsyncCallback *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI node_timer_callback_GetParameters(IMFAsyncCallback *iface,
+        DWORD *flags, DWORD *queue)
+{
+    return E_NOTIMPL;
+}
+
+static void session_deliver_sample_from_source(struct media_session *session, struct topo_node *source_node,
+        IMFSample *sample);
+
+static HRESULT WINAPI node_timer_callback_Invoke(IMFAsyncCallback *iface, IMFAsyncResult *result)
+{
+    struct topo_node *source_node = impl_node_from_IMFAsyncCallback(iface);
+    struct media_session *session = source_node->session;
+    IMFSample *sample;
+
+    TRACE("%p %p\n", iface, result);
+
+    EnterCriticalSection(&session->cs);
+    while (SUCCEEDED(topo_node_sourcestream_pop_sample(source_node, &sample)))
+    {
+        session_deliver_sample_from_source(session, source_node, sample);
+        IMFSample_Release(sample);
+    }
+    LeaveCriticalSection(&session->cs);
+
+    return S_OK;
+}
+
+static const IMFAsyncCallbackVtbl node_timer_callback_vtbl =
+{
+    node_timer_callback_QueryInterface,
+    node_timer_callback_AddRef,
+    node_timer_callback_Release,
+    node_timer_callback_GetParameters,
+    node_timer_callback_Invoke,
+};
+
 static HRESULT WINAPI node_sample_allocator_cb_QueryInterface(IMFVideoSampleAllocatorNotify *iface,
         REFIID riid, void **obj)
 {
@@ -2065,6 +2168,9 @@ static HRESULT session_append_node(struct media_session *session, IMFTopologyNod
 
             break;
         case MF_TOPOLOGY_SOURCESTREAM_NODE:
+            list_init(&topo_node->u.source.samples);
+            topo_node->u.source.timer_callback.lpVtbl = &node_timer_callback_vtbl;
+
             if (FAILED(IMFTopologyNode_GetUnknown(node, &MF_TOPONODE_SOURCE, &IID_IMFMediaSource,
                     (void **)&topo_node->u.source.source)))
             {
@@ -4298,10 +4404,40 @@ static void session_request_sample(struct media_session *session, IMFStreamSink 
         sink_node->u.sink.requests--;
 }
 
+static HRESULT topo_node_sourcestream_push_sample(struct topo_node *source_node, IMFSample *sample)
+{
+    struct sample *entry;
+
+    if (!(entry = calloc(1, sizeof(*entry))))
+        return E_OUTOFMEMORY;
+
+    entry->sample = sample;
+    IMFSample_AddRef(entry->sample);
+
+    list_add_tail(&source_node->u.source.samples, &entry->entry);
+    return S_OK;
+}
+
+static void session_deliver_sample_from_source(struct media_session *session, struct topo_node *source_node,
+        IMFSample *sample)
+{
+    struct topo_node *node;
+    DWORD input;
+
+    if (!(node = session_get_topo_node_output(session, source_node, 0, &input)))
+    {
+        WARN("Failed to node %p/%u output.\n", source_node, 0);
+        return;
+    }
+
+    session_deliver_sample_to_node(session, node, input, sample);
+}
+
 static void session_deliver_sample(struct media_session *session, IMFMediaStream *stream, const PROPVARIANT *value)
 {
     struct topo_node *source_node = NULL, *node;
-    DWORD input;
+    IMFSample *sample;
+    HRESULT hr;
 
     if (value && (value->vt != VT_UNKNOWN || !value->punkVal))
     {
@@ -4321,16 +4457,44 @@ static void session_deliver_sample(struct media_session *session, IMFMediaStream
     if (!source_node)
         return;
 
+    sample = value ? (IMFSample *)value->punkVal : NULL;
+
     if (!value)
         source_node->flags |= TOPO_NODE_END_OF_STREAM;
-
-    if (!(node = session_get_topo_node_output(session, source_node, 0, &input)))
+    else if (!(source_node->flags & TOPO_NODE_HAS_WAITED_FOR_PTS))
     {
-        WARN("Failed to node %p/%u output.\n", source_node, 0);
+        LONGLONG sampletime;
+        MFTIME clock_time;
+
+        source_node->flags |= TOPO_NODE_HAS_WAITED_FOR_PTS;
+
+        if (SUCCEEDED(hr = IMFSample_GetSampleTime(sample, &sampletime)))
+        {
+            if (source_node->u.source.cancel_key)
+            {
+                topo_node_sourcestream_push_sample(source_node, sample);
+                return;
+            }
+
+            if (SUCCEEDED(hr = IMFPresentationClock_GetTime(session->clock, &clock_time)) && clock_time < sampletime &&
+                SUCCEEDED(hr = MFScheduleWorkItem(&source_node->u.source.timer_callback, NULL,
+                                                  -((sampletime - clock_time) / 10000), &source_node->u.source.cancel_key)))
+            {
+                topo_node_sourcestream_push_sample(source_node, sample);
+                return;
+            }
+
+            source_node->u.source.cancel_key = 0;
+        }
+    }
+
+    if (!list_empty(&source_node->u.source.samples))
+    {
+        topo_node_sourcestream_push_sample(source_node, sample);
         return;
     }
 
-    session_deliver_sample_to_node(session, node, input, value ? (IMFSample *)value->punkVal : NULL);
+    session_deliver_sample_from_source(session, node, sample);
 }
 
 static void session_sink_invalidated(struct media_session *session, IMFMediaEvent *event, IMFStreamSink *sink)
