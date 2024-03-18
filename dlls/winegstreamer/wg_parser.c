@@ -303,7 +303,7 @@ static NTSTATUS wg_parser_stream_disable(void *args)
         stream->desired_caps = NULL;
     }
     pthread_mutex_unlock(&parser->mutex);
-    pthread_cond_signal(&parser->stream_event_cond);
+    pthread_cond_broadcast(&parser->stream_event_cond);
     return S_OK;
 }
 
@@ -330,7 +330,7 @@ static void release_buffer(struct wg_parser *parser, struct wg_parser_stream *st
     }
 
     stream->get_buffer_called = false;
-    pthread_cond_signal(&parser->stream_event_cond);
+    pthread_cond_broadcast(&parser->stream_event_cond);
 }
 
 static NTSTATUS wg_parser_stream_get_buffer(void *args)
@@ -756,7 +756,7 @@ static gboolean sink_event_cb(GstPad *pad, GstObject *parent, GstEvent *event)
             pthread_mutex_lock(&parser->mutex);
             stream->eos = true;
             if (stream->enabled)
-                pthread_cond_signal(&parser->stream_event_cond);
+                pthread_cond_broadcast(&parser->stream_event_cond);
             else
                 pthread_cond_signal(&parser->init_cond);
             pthread_mutex_unlock(&parser->mutex);
@@ -766,7 +766,7 @@ static gboolean sink_event_cb(GstPad *pad, GstObject *parent, GstEvent *event)
             pthread_mutex_lock(&parser->mutex);
 
             stream->flushing = true;
-            pthread_cond_signal(&parser->stream_event_cond);
+            pthread_cond_broadcast(&parser->stream_event_cond);
 
             if (stream->buffer)
             {
@@ -941,7 +941,7 @@ static GstFlowReturn sink_chain_cb(GstPad *pad, GstObject *parent, GstBuffer *bu
     stream->buffer = buffer;
 
     pthread_mutex_unlock(&parser->mutex);
-    pthread_cond_signal(&parser->stream_event_cond);
+    pthread_cond_broadcast(&parser->stream_event_cond);
 
     /* The chain callback is given a reference to the buffer. Transfer that
      * reference to the stream object, which will release it in
@@ -2129,7 +2129,7 @@ static NTSTATUS wg_parser_disconnect(void *args)
     pthread_mutex_lock(&parser->mutex);
     for (i = 0; i < parser->stream_count; ++i)
         parser->streams[i]->flushing = true;
-    pthread_cond_signal(&parser->stream_event_cond);
+    pthread_cond_broadcast(&parser->stream_event_cond);
     pthread_mutex_unlock(&parser->mutex);
 
     gst_element_set_state(parser->container, GST_STATE_NULL);
