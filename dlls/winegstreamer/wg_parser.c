@@ -122,6 +122,7 @@ struct wg_parser_stream
     GstCaps *codec_caps;
     GstCaps *current_caps;
     GstCaps *desired_caps;
+    GstCaps *next_desired_caps;
 
     GstBuffer *buffer;
     GstMapInfo map_info;
@@ -265,16 +266,53 @@ static NTSTATUS wg_parser_stream_get_codec_format(void *args)
     return S_OK;
 }
 
+static BOOL stream_set_next_caps(struct wg_parser_stream *stream, GstCaps *caps)
+{
+    struct wg_parser *parser = stream->parser;
+
+    while (stream->next_desired_caps && !parser->error)
+        pthread_cond_wait(&parser->stream_event_cond, &parser->mutex);
+
+    if (parser->error)
+    {
+        pthread_mutex_unlock(&parser->mutex);
+        return E_FAIL;
+    }
+
+    if (!(stream->current_caps && gst_caps_is_equal(stream->current_caps, caps)))
+    {
+        if (stream->desired_caps)
+        {
+            if (!gst_caps_is_equal(stream->desired_caps, caps))
+            {
+                stream->next_desired_caps = caps;
+                return !!stream->current_caps;
+            }
+        }
+        else
+            stream->desired_caps = caps;
+        return TRUE;
+    }
+    else if (!(stream->desired_caps && gst_caps_is_equal(stream->desired_caps, caps)))
+    {
+        stream->desired_caps = caps;
+        return FALSE;
+    }
+    gst_caps_unref(caps);
+    return FALSE;
+}
+
 static NTSTATUS wg_parser_stream_enable(void *args)
 {
     const struct wg_parser_stream_enable_params *params = args;
     struct wg_parser_stream *stream = get_stream(params->stream);
     const struct wg_format *format = params->format;
     struct wg_parser *parser = stream->parser;
+    BOOL need_reconf;
 
     pthread_mutex_lock(&parser->mutex);
 
-    stream->desired_caps = wg_format_to_caps(format);
+    need_reconf = stream_set_next_caps(stream, wg_format_to_caps(format));
     stream->enabled = true;
 
     pthread_mutex_unlock(&parser->mutex);
@@ -282,11 +320,18 @@ static NTSTATUS wg_parser_stream_enable(void *args)
     if (format->major_type == WG_MAJOR_TYPE_VIDEO)
     {
         bool flip = (format->u.video.height < 0);
+        GstVideoOrientationMethod old_method = -1, new_method = flip ? GST_VIDEO_ORIENTATION_VERT : GST_VIDEO_ORIENTATION_IDENTITY;
 
-        gst_util_set_object_arg(G_OBJECT(stream->flip), "method", flip ? "vertical-flip" : "none");
+        g_object_get(G_OBJECT(stream->flip), "method", &old_method, NULL);
+        if (new_method != old_method)
+        {
+            g_object_set(G_OBJECT(stream->flip), "method", new_method, NULL);
+            need_reconf = TRUE;
+        }
     }
 
-    push_event(stream->my_sink, gst_event_new_reconfigure());
+    if (need_reconf)
+        push_event(stream->my_sink, gst_event_new_reconfigure());
     return S_OK;
 }
 
@@ -301,6 +346,11 @@ static NTSTATUS wg_parser_stream_disable(void *args)
     {
         gst_caps_unref(stream->desired_caps);
         stream->desired_caps = NULL;
+    }
+    if (stream->next_desired_caps)
+    {
+        gst_caps_unref(stream->next_desired_caps);
+        stream->next_desired_caps = NULL;
     }
     pthread_mutex_unlock(&parser->mutex);
     pthread_cond_broadcast(&parser->stream_event_cond);
@@ -823,6 +873,16 @@ static gboolean sink_event_cb(GstPad *pad, GstObject *parent, GstEvent *event)
             pthread_mutex_lock(&parser->mutex);
             stream->current_caps = gst_caps_ref(caps);
             stream->fix_nv12 = fix_nv12;
+            if (stream->next_desired_caps)
+            {
+                if (!gst_caps_can_intersect(stream->current_caps, stream->next_desired_caps))
+                    push_event(stream->my_sink, gst_event_new_reconfigure());
+                else
+                {
+                    stream->next_desired_caps = NULL;
+                    pthread_cond_broadcast(&parser->stream_event_cond);
+                }
+            }
             pthread_mutex_unlock(&parser->mutex);
             pthread_cond_signal(&parser->init_cond);
             break;
@@ -899,6 +959,14 @@ static GstFlowReturn sink_chain_cb(GstPad *pad, GstObject *parent, GstBuffer *bu
 
     pthread_mutex_lock(&parser->mutex);
 
+    if (stream->next_desired_caps)
+    {
+        GST_DEBUG("Stream is changing format; discarding buffer.");
+        pthread_mutex_unlock(&parser->mutex);
+        gst_buffer_unref(buffer);
+        return GST_FLOW_OK;
+    }
+
     if (!stream->has_buffer)
     {
         stream->has_buffer = true;
@@ -968,7 +1036,15 @@ static gboolean sink_query_cb(GstPad *pad, GstObject *parent, GstQuery *query)
             gst_query_parse_caps(query, &filter);
 
             pthread_mutex_lock(&parser->mutex);
-            if (!stream->desired_caps || !(caps = gst_caps_copy(stream->desired_caps)))
+            if (stream->next_desired_caps)
+            {
+                if (!(caps = gst_caps_copy(stream->next_desired_caps)))
+                {
+                    pthread_mutex_unlock(&parser->mutex);
+                    return FALSE;
+                }
+            }
+            else if (!stream->desired_caps || !(caps = gst_caps_copy(stream->desired_caps)))
             {
                 pthread_mutex_unlock(&parser->mutex);
                 return FALSE;
@@ -1002,7 +1078,7 @@ static gboolean sink_query_cb(GstPad *pad, GstObject *parent, GstQuery *query)
 
             pthread_mutex_lock(&parser->mutex);
 
-            if (!stream->desired_caps)
+            if (!stream->desired_caps || !stream->next_desired_caps)
             {
                 pthread_mutex_unlock(&parser->mutex);
                 gst_query_set_accept_caps_result(query, TRUE);
@@ -1013,6 +1089,11 @@ static gboolean sink_query_cb(GstPad *pad, GstObject *parent, GstQuery *query)
             wg_format_from_caps(&format, caps);
             wg_format_from_caps(&current_format, stream->desired_caps);
             ret = wg_format_compare(&format, &current_format);
+            if (!ret)
+            {
+                wg_format_from_caps(&current_format, stream->next_desired_caps);
+                ret = wg_format_compare(&format, &current_format);
+            }
 
             pthread_mutex_unlock(&parser->mutex);
 
@@ -1695,6 +1776,7 @@ static GstBusSyncReply bus_handler_cb(GstBus *bus, GstMessage *msg, gpointer use
         parser->error = true;
         pthread_mutex_unlock(&parser->mutex);
         pthread_cond_signal(&parser->init_cond);
+        pthread_cond_broadcast(&parser->stream_event_cond);
         break;
 
     case GST_MESSAGE_WARNING:
@@ -1728,6 +1810,7 @@ static GstBusSyncReply bus_handler_cb(GstBus *bus, GstMessage *msg, gpointer use
                     GST_WARNING("Autoplugged element failed to initialise. Giving up as we're using a web scheme.");
                 else
                     GST_WARNING("Autoplugged element failed to initialise, trying again with protonvideoconvert.");
+                pthread_cond_broadcast(&parser->stream_event_cond);
             }
             pthread_mutex_unlock(&parser->mutex);
         }
