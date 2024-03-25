@@ -1577,9 +1577,12 @@ static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
 
     wg_parser_disconnect(source->wg_parser);
 
-    source->read_thread_shutdown = true;
-    WaitForSingleObject(source->read_thread, INFINITE);
-    CloseHandle(source->read_thread);
+    if (source->read_thread)
+    {
+        source->read_thread_shutdown = true;
+        WaitForSingleObject(source->read_thread, INFINITE);
+        CloseHandle(source->read_thread);
+    }
 
     IMFMediaEventQueue_QueueEventParamVar(source->event_queue, MEError, &GUID_NULL, MF_E_SHUTDOWN, NULL);
     IMFMediaEventQueue_Shutdown(source->event_queue);
@@ -1677,7 +1680,8 @@ static HRESULT media_source_create(struct object_context *context, IMFMediaSourc
     }
     object->wg_parser = parser;
 
-    object->read_thread = CreateThread(NULL, 0, read_thread, object, 0, NULL);
+    if (context->type != WG_PARSER_URIDECODEBIN)
+        object->read_thread = CreateThread(NULL, 0, read_thread, object, 0, NULL);
 
     object->state = SOURCE_OPENING;
 
