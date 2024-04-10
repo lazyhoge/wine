@@ -43,6 +43,12 @@
 #include "winternl.h"
 #include "dshow.h"
 
+#define COBJMACROS
+#include "mfapi.h"
+#include "mferror.h"
+#include "mfobjects.h"
+#include "mfidl.h"
+
 #include "unix_private.h"
 
 extern GstGLDisplay *gl_display;
@@ -110,6 +116,9 @@ struct wg_parser
     GstContext *context;
 
     bool is_seekable;
+
+    bool buffering;
+    bool sent_buffering_event;
 };
 static const unsigned int input_cache_chunk_size = 512 << 10;
 
@@ -247,6 +256,47 @@ static NTSTATUS wg_parser_push_data(void *args)
     pthread_cond_signal(&parser->read_done_cond);
 
     return S_OK;
+}
+
+static NTSTATUS wg_parser_get_next_event(void *args)
+{
+    struct wg_parser_get_next_event_params *params = args;
+    struct wg_parser *parser = get_parser(params->parser);
+    HRESULT hr = S_FALSE;
+
+    pthread_mutex_lock(&parser->mutex);
+
+    while (parser->sink_connected && (parser->buffering == parser->sent_buffering_event))
+        pthread_cond_wait(&parser->stream_event_cond, &parser->mutex);
+
+    if (!parser->sink_connected)
+    {
+        pthread_mutex_unlock(&parser->mutex);
+        return VFW_E_WRONG_STATE;
+    }
+
+    params->stream = -1;
+    params->event_type = 0;
+    memset(&params->ext_type, 0, sizeof(params->ext_type));
+    params->evt_hr = S_OK;
+    params->data->vt = VT_EMPTY;
+
+    if (parser->buffering && !parser->sent_buffering_event)
+    {
+        params->event_type = MEBufferingStarted;
+        parser->sent_buffering_event = TRUE;
+        hr = S_OK;
+    }
+    else if (!parser->buffering && parser->sent_buffering_event)
+    {
+        params->event_type = MEBufferingStopped;
+        parser->sent_buffering_event = FALSE;
+        hr = S_OK;
+    }
+
+    pthread_mutex_unlock(&parser->mutex);
+
+    return hr;
 }
 
 static NTSTATUS wg_parser_stream_get_current_format(void *args)
@@ -1848,6 +1898,19 @@ static GstBusSyncReply bus_handler_cb(GstBus *bus, GstMessage *msg, gpointer use
         break;
     }
 
+    case GST_MESSAGE_BUFFERING:
+    {
+        gint percent;
+
+        gst_message_parse_buffering(msg, &percent);
+        pthread_mutex_lock(&parser->mutex);
+        parser->buffering = percent < 100;
+        pthread_mutex_unlock(&parser->mutex);
+        pthread_cond_broadcast(&parser->stream_event_cond);
+        GST_DEBUG("parser %p, message %s, buffering %d.", parser, GST_MESSAGE_TYPE_NAME(msg), parser->buffering);
+        break;
+    }
+
     default:
         break;
     }
@@ -2271,6 +2334,7 @@ static NTSTATUS wg_parser_disconnect(void *args)
     parser->sink_connected = false;
     pthread_mutex_unlock(&parser->mutex);
     pthread_cond_signal(&parser->read_cond);
+    pthread_cond_broadcast(&parser->stream_event_cond);
 
     for (i = 0; i < parser->stream_count; ++i)
         free_stream(parser->streams[i]);
@@ -2411,6 +2475,8 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
 
     X(wg_parser_get_next_read_offset),
     X(wg_parser_push_data),
+
+    X(wg_parser_get_next_event),
 
     X(wg_parser_get_stream_count),
     X(wg_parser_get_stream),
@@ -2810,6 +2876,8 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
 
     X(wg_parser_get_next_read_offset),
     X64(wg_parser_push_data),
+
+    X(wg_parser_get_next_event),
 
     X(wg_parser_get_stream_count),
     X(wg_parser_get_stream),

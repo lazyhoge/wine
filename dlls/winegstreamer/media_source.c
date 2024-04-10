@@ -202,6 +202,9 @@ struct media_source
 
     HANDLE read_thread;
     bool read_thread_shutdown;
+
+    HANDLE event_thread;
+    bool event_thread_shutdown;
 };
 
 static inline struct media_stream *impl_from_IMFMediaStream(IMFMediaStream *iface)
@@ -804,11 +807,13 @@ static HRESULT wait_on_sample(struct media_stream *stream, IUnknown *token)
 
     TRACE("%p, %p\n", stream, token);
 
+    memset(&buffer, 0, sizeof(buffer));
     while (stream_get_buffer(stream, &buffer))
     {
         HRESULT hr = media_stream_send_sample(stream, &buffer, token);
         if (hr != S_FALSE)
             return hr;
+        memset(&buffer, 0, sizeof(buffer));
     }
 
     if (source->state == SOURCE_SHUTDOWN)
@@ -933,6 +938,41 @@ static DWORD CALLBACK read_thread(void *arg)
     }
 
     free(data);
+    TRACE("Media source is shutting down; exiting.\n");
+    return 0;
+}
+
+static DWORD CALLBACK event_thread(void *arg)
+{
+    struct media_source *source = arg;
+
+    TRACE("Starting event thread for media source %p.\n", source);
+
+    while (!source->event_thread_shutdown)
+    {
+        PROPVARIANT data = {.vt = VT_EMPTY};
+        MediaEventType event_type = 0;
+        IMFMediaEventQueue *queue;
+        GUID ext_type = GUID_NULL;
+        HRESULT hr, evt_hr = E_FAIL;
+        int stream = -1;
+
+        if (!wg_parser_get_next_event(source->wg_parser, &stream, &event_type, &ext_type, &evt_hr, &data))
+            continue;
+
+        if (!event_type)
+            continue;
+
+        if (stream != -1)
+            queue = source->streams[stream]->event_queue;
+        else
+            queue = source->event_queue;
+
+        if (FAILED(hr = IMFMediaEventQueue_QueueEventParamVar(queue, event_type, &ext_type, evt_hr, &data)))
+            ERR("Failed to enqueue event %lx, ext_type %s, evt_hr %lx, data %s, hr %#lx.\n", event_type,
+                debugstr_guid(&ext_type), evt_hr, wine_dbgstr_variant((VARIANT *)&data), hr);
+    }
+
     TRACE("Media source is shutting down; exiting.\n");
     return 0;
 }
@@ -1584,6 +1624,13 @@ static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
 
     wg_parser_disconnect(source->wg_parser);
 
+    if (source->event_thread)
+    {
+        source->event_thread_shutdown = true;
+        WaitForSingleObject(source->event_thread, INFINITE);
+        CloseHandle(source->event_thread);
+    }
+
     if (source->read_thread)
     {
         source->read_thread_shutdown = true;
@@ -1690,6 +1737,8 @@ static HRESULT media_source_create(struct object_context *context, IMFMediaSourc
     if (context->type != WG_PARSER_URIDECODEBIN)
         object->read_thread = CreateThread(NULL, 0, read_thread, object, 0, NULL);
 
+    object->event_thread = CreateThread(NULL, 0, event_thread, object, 0, NULL);
+
     object->state = SOURCE_OPENING;
 
     if (FAILED(hr = wg_parser_connect(parser, object->file_size, context->url)))
@@ -1770,6 +1819,12 @@ fail:
 
     if (stream_count != UINT_MAX)
         wg_parser_disconnect(object->wg_parser);
+    if (object->event_thread)
+    {
+        object->event_thread_shutdown = true;
+        WaitForSingleObject(object->event_thread, INFINITE);
+        CloseHandle(object->event_thread);
+    }
     if (object->read_thread)
     {
         object->read_thread_shutdown = true;

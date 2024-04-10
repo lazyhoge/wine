@@ -225,6 +225,27 @@ bool wg_parser_get_next_read_offset(wg_parser_t parser, uint64_t *offset, uint32
     return true;
 }
 
+bool wg_parser_get_next_event(wg_parser_t parser, int *stream, MediaEventType *event_type,
+        GUID *ext_type, HRESULT *evt_hr, PROPVARIANT *data)
+{
+    struct wg_parser_get_next_event_params params =
+    {
+        .parser = parser,
+        .data = data,
+    };
+
+    TRACE("parser %#I64x, stream %p, event_type %p, ext_type %p, evt_hr %p, data %p.\n",
+            parser, stream, event_type, ext_type, evt_hr, data);
+
+    if (WINE_UNIX_CALL(unix_wg_parser_get_next_event, &params))
+        return false;
+    *stream = params.stream;
+    *event_type = params.event_type;
+    *ext_type = params.ext_type;
+    *evt_hr = params.evt_hr;
+    return true;
+}
+
 void wg_parser_push_data(wg_parser_t parser, const void *data, uint32_t size)
 {
     struct wg_parser_push_data_params params =

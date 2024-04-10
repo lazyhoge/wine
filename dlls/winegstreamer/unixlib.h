@@ -249,6 +249,16 @@ struct wg_parser_push_data_params
     UINT32 size;
 };
 
+struct wg_parser_get_next_event_params
+{
+    wg_parser_t parser;
+    int stream;
+    UINT32 event_type;
+    GUID ext_type;
+    HRESULT evt_hr;
+    PROPVARIANT *data;
+};
+
 struct wg_parser_get_stream_count_params
 {
     wg_parser_t parser;
@@ -445,6 +455,8 @@ enum unix_funcs
 
     unix_wg_parser_get_next_read_offset,
     unix_wg_parser_push_data,
+
+    unix_wg_parser_get_next_event,
 
     unix_wg_parser_get_stream_count,
     unix_wg_parser_get_stream,
