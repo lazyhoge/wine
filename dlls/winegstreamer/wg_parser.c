@@ -108,6 +108,8 @@ struct wg_parser
     bool use_mediaconv;
     bool use_opengl;
     GstContext *context;
+
+    bool is_seekable;
 };
 static const unsigned int input_cache_chunk_size = 512 << 10;
 
@@ -169,6 +171,15 @@ static NTSTATUS wg_parser_get_stream(void *args)
     struct wg_parser_get_stream_params *params = args;
 
     params->stream = (wg_parser_stream_t)(ULONG_PTR)get_parser(params->parser)->streams[params->index];
+    return S_OK;
+}
+
+static NTSTATUS wg_parser_is_seekable(void *args)
+{
+    struct wg_parser_is_seekable_params *params = args;
+    struct wg_parser *parser = get_parser(params->parser);
+
+    params->seekable = parser->is_seekable;
     return S_OK;
 }
 
@@ -544,6 +555,9 @@ static NTSTATUS wg_parser_stream_seek(void *args)
     GstSeekFlags flags = 0;
 
     stream = get_stream(params->stream);
+
+    if (!stream->parser->is_seekable)
+        return S_OK;
 
     if (start_flags & AM_SEEKING_SeekToKeyFrame)
         flags |= GST_SEEK_FLAG_KEY_UNIT;
@@ -2039,6 +2053,7 @@ static NTSTATUS wg_parser_connect(void *args)
     parser->start_offset = parser->next_offset = parser->stop_offset = 0;
     parser->next_pull_offset = 0;
     parser->error = false;
+    parser->is_seekable = true;
 
     if (!decodebin_parser_init_gst(parser))
         goto out;
@@ -2057,6 +2072,11 @@ static NTSTATUS wg_parser_connect(void *args)
         else
             GST_ERROR("Failed to play stream.");
         goto out;
+    }
+    else if (ret == GST_STATE_CHANGE_NO_PREROLL && parser->uri)
+    {
+        GST_DEBUG("Stream does not preroll.");
+        parser->is_seekable = false;
     }
 
     pthread_mutex_lock(&parser->mutex);
@@ -2077,6 +2097,24 @@ static NTSTATUS wg_parser_connect(void *args)
             use_mediaconv = true;
         pthread_mutex_unlock(&parser->mutex);
         goto out;
+    }
+
+    if (parser->stream_count && parser->is_seekable)
+    {
+        GstQuery *query = gst_query_new_seeking(GST_FORMAT_TIME);
+        gboolean seekable = false;
+
+        if (query)
+        {
+            if (gst_pad_peer_query(parser->streams[0]->my_sink, query))
+                gst_query_parse_seeking(query, NULL, &seekable, NULL, NULL);
+            gst_query_unref(query);
+        }
+        if (!seekable)
+        {
+            GST_DEBUG("Stream is not seekable.");
+            parser->is_seekable = false;
+        }
     }
 
     for (i = 0; i < parser->stream_count; ++i)
@@ -2121,7 +2159,17 @@ static NTSTATUS wg_parser_connect(void *args)
             }
             if (gst_pad_peer_query_duration(stream->my_sink, GST_FORMAT_TIME, &duration))
             {
-                stream->duration = duration == -1 ? (uint64_t)-1 : duration / 100;
+                if (duration == -1)
+                {
+                    if (parser->uri)
+                    {
+                        GST_DEBUG("Stream has no duration.");
+                        parser->is_seekable = false;
+                    }
+                    stream->duration = (uint64_t)-1;
+                }
+                else
+                    stream->duration = duration / 100;
                 break;
             }
 
@@ -2366,6 +2414,8 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
 
     X(wg_parser_get_stream_count),
     X(wg_parser_get_stream),
+
+    X(wg_parser_is_seekable),
 
     X(wg_parser_stream_get_current_format),
     X(wg_parser_stream_get_codec_format),
@@ -2763,6 +2813,8 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
 
     X(wg_parser_get_stream_count),
     X(wg_parser_get_stream),
+
+    X(wg_parser_is_seekable),
 
     X64(wg_parser_stream_get_current_format),
     X64(wg_parser_stream_get_codec_format),

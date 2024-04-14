@@ -268,6 +268,19 @@ wg_parser_stream_t wg_parser_get_stream(wg_parser_t parser, uint32_t index)
     return params.stream;
 }
 
+BOOL wg_parser_is_seekable(wg_parser_t parser)
+{
+    struct wg_parser_is_seekable_params params =
+    {
+        .parser = parser,
+    };
+
+    TRACE("parser %#I64x.\n", parser);
+
+    WINE_UNIX_CALL(unix_wg_parser_is_seekable, &params);
+    return params.seekable;
+}
+
 void wg_parser_stream_get_current_format(wg_parser_stream_t stream, struct wg_format *format)
 {
     struct wg_parser_stream_get_current_format_params params =

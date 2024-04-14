@@ -82,6 +82,8 @@ void wg_parser_push_data(wg_parser_t parser, const void *data, uint32_t size);
 uint32_t wg_parser_get_stream_count(wg_parser_t parser);
 wg_parser_stream_t wg_parser_get_stream(wg_parser_t parser, uint32_t index);
 
+BOOL wg_parser_is_seekable(wg_parser_t parser);
+
 void wg_parser_stream_get_current_format(wg_parser_stream_t stream, struct wg_format *format);
 void wg_parser_stream_get_codec_format(wg_parser_stream_t stream, struct wg_format *format);
 void wg_parser_stream_enable(wg_parser_stream_t stream, const struct wg_format *format);

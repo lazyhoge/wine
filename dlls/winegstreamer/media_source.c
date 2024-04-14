@@ -1438,7 +1438,11 @@ static HRESULT WINAPI media_source_GetCharacteristics(IMFMediaSource *iface, DWO
     if (source->state == SOURCE_SHUTDOWN)
         hr = MF_E_SHUTDOWN;
     else
-        *characteristics = MFMEDIASOURCE_CAN_SEEK | MFMEDIASOURCE_CAN_PAUSE;
+    {
+        *characteristics = MFMEDIASOURCE_CAN_PAUSE;
+        if (!source->wg_parser || wg_parser_is_seekable(source->wg_parser))
+            *characteristics |= MFMEDIASOURCE_CAN_SEEK;
+    }
 
     LeaveCriticalSection(&source->cs);
 
