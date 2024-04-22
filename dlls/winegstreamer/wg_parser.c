@@ -1918,6 +1918,7 @@ static NTSTATUS wg_parser_connect(void *args)
     }
 
     parser->container = gst_bin_new(NULL);
+    GST_OBJECT_FLAG_SET(parser->container, GST_BIN_FLAG_STREAMS_AWARE);
     gst_element_set_bus(parser->container, parser->bus);
     if (parser->context)
         gst_element_set_context(parser->container, parser->context);
