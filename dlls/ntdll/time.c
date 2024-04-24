@@ -382,8 +382,7 @@ LONGLONG WINAPI RtlGetSystemTimePrecise( void )
  */
 BOOL WINAPI DECLSPEC_HOTPATCH RtlQueryPerformanceCounter( LARGE_INTEGER *counter )
 {
-    NtQueryPerformanceCounter( counter, NULL );
-    return TRUE;
+    return !WINE_UNIX_CALL( unix_query_performance_counter, counter );
 }
 
 /******************************************************************************

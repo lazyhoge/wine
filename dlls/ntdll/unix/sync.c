@@ -2503,12 +2503,20 @@ NTSTATUS WINAPI NtDelayExecution( BOOLEAN alertable, const LARGE_INTEGER *timeou
 }
 
 
+NTSTATUS query_performance_counter( void *args )
+{
+    LARGE_INTEGER *counter = args;
+    counter->QuadPart = monotonic_counter();
+    return STATUS_SUCCESS;
+}
+
+
 /******************************************************************************
  *              NtQueryPerformanceCounter (NTDLL.@)
  */
 NTSTATUS WINAPI NtQueryPerformanceCounter( LARGE_INTEGER *counter, LARGE_INTEGER *frequency )
 {
-    counter->QuadPart = monotonic_counter();
+    query_performance_counter( counter );
     if (frequency) frequency->QuadPart = TICKSPERSEC;
     return STATUS_SUCCESS;
 }

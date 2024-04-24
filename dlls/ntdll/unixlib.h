@@ -121,6 +121,7 @@ enum ntdll_unix_funcs
     unix___wine_get_unix_env,
     unix___wine_set_unix_env,
     unix_wine_dbg_ftrace,
+    unix_query_performance_counter,
     unix_steamclient_setup_trampolines,
     unix_debugstr_pc,
     unix_compat_wine_nt_to_unix_file_name,
