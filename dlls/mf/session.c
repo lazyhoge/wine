@@ -104,6 +104,8 @@ enum command_state
     /* Command submitted but hasn't started execution.
      * invariant: the submitted command is always the head of session->commands. */
     COMMAND_STATE_SUBMITTED,
+    /* Command is executing */
+    COMMAND_STATE_RUNNING,
     /* STOPPED | PAUSED | STARTED -> STARTED transition */
     COMMAND_STATE_RESTARTING_SOURCES, /* -> COMMAND_STATE_STARTING_SOURCES */
     COMMAND_STATE_STARTING_SOURCES,   /* -> COMMAND_STATE_PREROLLING_SINKS | COMMAND_STATE_STARTING_SINKS */
@@ -2866,6 +2868,7 @@ static HRESULT WINAPI session_commands_callback_Invoke(IMFAsyncCallback *iface, 
 
     assert( session->command_state == COMMAND_STATE_SUBMITTED );
     list_remove(&op->entry);
+    session->command_state = COMMAND_STATE_RUNNING;
 
     switch (op->command)
     {
@@ -2876,7 +2879,6 @@ static HRESULT WINAPI session_commands_callback_Invoke(IMFAsyncCallback *iface, 
         case SESSION_CMD_SET_TOPOLOGY:
             session->presentation.flags &= ~SESSION_FLAG_SOURCE_SHUTDOWN;
             session_set_topology(session, op->set_topology.flags, op->set_topology.topology);
-            session_command_complete(session);
             break;
         case SESSION_CMD_START:
             if (session->presentation.flags & SESSION_FLAG_SOURCE_SHUTDOWN)
@@ -2910,11 +2912,13 @@ static HRESULT WINAPI session_commands_callback_Invoke(IMFAsyncCallback *iface, 
             break;
         case SESSION_CMD_SHUTDOWN:
             session_clear_command_list(session);
-            session_command_complete(session);
             break;
         default:
             ;
     }
+
+    if (session->command_state == COMMAND_STATE_RUNNING)
+        session_command_complete(session);
 
     LeaveCriticalSection(&session->cs);
 
@@ -3033,6 +3037,7 @@ static void session_handle_source_shutdown(struct media_session *session)
                 session_set_stopped(session, MESessionStopped, MF_E_SHUTDOWN);
             break;
         case COMMAND_STATE_SUBMITTED:
+        case COMMAND_STATE_RUNNING:
             break;
     }
 
@@ -3398,6 +3403,7 @@ static void session_set_source_object_state(struct media_session *session, IUnkn
             session_finalize_sinks(session);
             break;
         case COMMAND_STATE_SUBMITTED:
+        case COMMAND_STATE_RUNNING:
         case COMMAND_STATE_COMPLETE:
         case COMMAND_STATE_PREROLLING_SINKS:
         case COMMAND_STATE_STARTING_SINKS:
@@ -3482,6 +3488,7 @@ static void session_set_sink_stream_state(struct media_session *session, IMFStre
                 session_set_closed(session, hr);
             break;
         case COMMAND_STATE_SUBMITTED:
+        case COMMAND_STATE_RUNNING:
         case COMMAND_STATE_COMPLETE:
         case COMMAND_STATE_RESTARTING_SOURCES:
         case COMMAND_STATE_STARTING_SOURCES:
