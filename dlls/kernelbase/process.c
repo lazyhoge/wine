@@ -581,6 +581,25 @@ static int battleye_launcher_redirect_hack( const WCHAR *app_name, WCHAR *new_na
     return 1;
 }
 
+static BOOL is_ytdlp( const WCHAR *app_name )
+{
+    static const WCHAR ytdlp_exeW[] = L"yt-dlp.exe";
+    static const size_t ytdlp_exeW_len = ARRAY_SIZE(ytdlp_exeW) - 1;
+    size_t len;
+
+    if (!app_name)
+        return FALSE;
+
+    len = wcslen( app_name );
+    if (len < ytdlp_exeW_len + 1)
+        return FALSE;
+    if (app_name[len - ytdlp_exeW_len - 1] != '\\' && app_name[len - ytdlp_exeW_len - 1] != '/')
+        return FALSE;
+    if (wcscmp( app_name + (len - ytdlp_exeW_len), ytdlp_exeW ))
+        return FALSE;
+    return TRUE;
+}
+
 static int ytdlp_hack( const WCHAR *app_name, WCHAR *new_name, DWORD new_name_len, WCHAR **cmdline )
 {
     static const WCHAR ytdlp_exeW[] = L"yt-dlp.exe";
@@ -791,6 +810,9 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
     product_name = get_product_name( app_name );
     if (battleye_launcher_redirect_hack( app_name, name, ARRAY_SIZE(name), &orig_app_name, product_name ))
         app_name = name;
+
+    if (is_ytdlp( app_name ))
+        startup_info->hStdError = INVALID_HANDLE_VALUE;
 
     if (ytdlp_hack( app_name, name, ARRAY_SIZE(name), &tidy_cmdline ))
         app_name = name;
