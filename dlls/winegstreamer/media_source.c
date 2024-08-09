@@ -1459,8 +1459,11 @@ static HRESULT WINAPI media_source_CreatePresentationDescriptor(IMFMediaSource *
         hr = MF_E_SHUTDOWN;
     else if (SUCCEEDED(hr = MFCreatePresentationDescriptor(source->stream_count, source->descriptors, descriptor)))
     {
-        if (FAILED(hr = IMFPresentationDescriptor_SetUINT64(*descriptor, &MF_PD_DURATION, source->duration)))
-            WARN("Failed to set presentation descriptor MF_PD_DURATION, hr %#lx\n", hr);
+        if (source->duration != (UINT64)-1)
+        {
+            if (FAILED(hr = IMFPresentationDescriptor_SetUINT64(*descriptor, &MF_PD_DURATION, source->duration)))
+                WARN("Failed to set presentation descriptor MF_PD_DURATION, hr %#lx\n", hr);
+        }
 
         for (i = 0; i < source->stream_count; ++i)
         {

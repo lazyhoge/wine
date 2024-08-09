@@ -2019,7 +2019,7 @@ static NTSTATUS wg_parser_connect(void *args)
             }
             if (gst_pad_peer_query_duration(stream->my_sink, GST_FORMAT_TIME, &duration))
             {
-                stream->duration = duration / 100;
+                stream->duration = duration == -1 ? (uint64_t)-1 : duration / 100;
                 break;
             }
 
