@@ -1521,7 +1521,7 @@ static HRESULT WINAPI media_engine_load_handler_Invoke(IMFAsyncCallback *iface, 
     engine->network_state = MF_MEDIA_ENGINE_NETWORK_LOADING;
     IMFMediaEngineNotify_EventNotify(engine->callback, MF_MEDIA_ENGINE_EVENT_LOADSTART, 0, 0);
 
-    start_playback = engine->flags & FLAGS_ENGINE_PLAY_PENDING;
+    start_playback = (engine->flags & FLAGS_ENGINE_PLAY_PENDING) || (engine->flags & FLAGS_ENGINE_AUTO_PLAY);
     media_engine_set_flag(engine, FLAGS_ENGINE_SOURCE_PENDING | FLAGS_ENGINE_PLAY_PENDING, FALSE);
 
     if (engine->extension)
@@ -2220,14 +2220,19 @@ static BOOL WINAPI media_engine_GetAutoPlay(IMFMediaEngineEx *iface)
 static HRESULT WINAPI media_engine_SetAutoPlay(IMFMediaEngineEx *iface, BOOL autoplay)
 {
     struct media_engine *engine = impl_from_IMFMediaEngineEx(iface);
+    HRESULT hr = S_OK;
 
-    FIXME("(%p, %d): stub.\n", iface, autoplay);
+    TRACE("%p, %d.\n", iface, autoplay);
 
     EnterCriticalSection(&engine->cs);
-    media_engine_set_flag(engine, FLAGS_ENGINE_AUTO_PLAY, autoplay);
+    if (autoplay && !(engine->flags & FLAGS_ENGINE_SHUT_DOWN) &&
+        engine->network_state == MF_MEDIA_ENGINE_NETWORK_IDLE)
+        hr = IMFMediaEngineEx_Play(iface);
+    if (SUCCEEDED(hr))
+        media_engine_set_flag(engine, FLAGS_ENGINE_AUTO_PLAY, autoplay);
     LeaveCriticalSection(&engine->cs);
 
-    return S_OK;
+    return hr;
 }
 
 static BOOL WINAPI media_engine_GetLoop(IMFMediaEngineEx *iface)
