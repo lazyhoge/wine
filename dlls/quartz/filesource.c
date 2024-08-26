@@ -191,7 +191,7 @@ BOOL get_media_type(const WCHAR *filename, GUID *majortype, GUID *subtype, GUID 
         WCHAR guidstr[39];
         HKEY key;
 
-        wcscat(extensions_path, ext);
+        wcsncat(extensions_path, ext, ARRAY_SIZE(extensions_path));
         if (!RegOpenKeyExW(HKEY_CLASSES_ROOT, extensions_path, 0, KEY_READ, &key))
         {
             size = sizeof(guidstr);
