@@ -1029,7 +1029,9 @@ static HRESULT WINAPI media_engine_session_events_Invoke(IMFAsyncCallback *iface
             break;
 
         case MEEndOfPresentationSegment:
+            EnterCriticalSection(&engine->cs);
             video_frame_sink_notify_end_of_presentation_segment(engine->presentation.frame_sink);
+            LeaveCriticalSection(&engine->cs);
             break;
 
         case MESessionRateChanged:

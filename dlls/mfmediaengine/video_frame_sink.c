@@ -1308,6 +1308,9 @@ HRESULT video_frame_sink_get_pts(struct video_frame_sink *sink, MFTIME clocktime
 void video_frame_sink_notify_end_of_presentation_segment(struct video_frame_sink *sink)
 {
     sink->eos = TRUE;
+    /* At the end of presentation, the media source sends MEEndOfPresentation _instead of_
+       MEMediaSample, so reset sample_request_pending here. */
+    sink->sample_request_pending = FALSE;
 }
 
 ULONG video_frame_sink_release(struct video_frame_sink *sink)
