@@ -110,6 +110,7 @@ struct wg_parser
     GstContext *context;
 
     bool is_seekable;
+    GstObject *force_source_not_seekable;
 };
 static const unsigned int input_cache_chunk_size = 512 << 10;
 
@@ -1766,6 +1767,35 @@ static gboolean src_activate_mode_cb(GstPad *pad, GstObject *parent, GstPadMode 
     return FALSE;
 }
 
+struct _GstSoupHTTPSrc_initial
+{
+    GstPushSrc element;
+    gchar *location;
+    gchar *redirection_uri;
+    gboolean redirection_permanent;
+    gchar *user_agent;
+    gboolean automatic_redirect;
+    void *proxy;
+    gchar *user_id;
+    gchar *user_pw;
+    gchar *proxy_id;
+    gchar *proxy_pw;
+    gchar **cookies;
+    void *session;
+    gboolean session_is_shared;
+    void *external_session;
+    void *msg;
+    gint retry_count;
+    gint max_retries;
+    gchar *method;
+    GstFlowReturn headers_ret;
+    gboolean got_headers;
+    gboolean have_size;
+    guint64 content_size;
+    guint64 read_position;
+    gboolean seekable;
+};
+
 static GstBusSyncReply bus_handler_cb(GstBus *bus, GstMessage *msg, gpointer user)
 {
     struct wg_parser *parser = user;
@@ -1807,6 +1837,15 @@ static GstBusSyncReply bus_handler_cb(GstBus *bus, GstMessage *msg, gpointer use
     case GST_MESSAGE_DURATION_CHANGED:
         pthread_mutex_lock(&parser->mutex);
         parser->has_duration = true;
+
+        /* HACK: Some decoding elements (e.g. qtdemux) send seek events
+           to the source is they believe it to be seekable. */
+        if (parser->force_source_not_seekable == GST_MESSAGE_SRC(msg))
+        {
+            struct _GstSoupHTTPSrc_initial *p = (void *)GST_MESSAGE_SRC(msg);
+            p->seekable = false;
+        }
+
         pthread_mutex_unlock(&parser->mutex);
         pthread_cond_signal(&parser->init_cond);
         break;
@@ -1827,6 +1866,44 @@ static GstBusSyncReply bus_handler_cb(GstBus *bus, GstMessage *msg, gpointer use
                 pthread_cond_broadcast(&parser->stream_event_cond);
             }
             pthread_mutex_unlock(&parser->mutex);
+        }
+        else if (gst_structure_has_name(structure, "http-headers"))
+        {
+            GstStructure *response_headers = NULL;
+
+            /* souphttpsrc assumes that servers that do not include an
+               Accept-Ranges header in the response do support ranges,
+               then breaks when seeking fails. Assume that servers that
+               do not include the Accept-Ranges header in the response
+               do not support seeking. */
+
+            gst_structure_get(structure, "response-headers", GST_TYPE_STRUCTURE, &response_headers, NULL);
+            if (response_headers)
+            {
+                bool found = false;
+                gint i;
+
+                for (i = 0; i < gst_structure_n_fields(response_headers); i++)
+                {
+                    const gchar *name = gst_structure_nth_field_name(response_headers, i);
+                    if (!strcasecmp(name, "Accept-Ranges") || !strcasecmp(name, "Content-Range"))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    struct _GstSoupHTTPSrc_initial *p = (void *)GST_MESSAGE_SRC(msg);
+
+                    GST_DEBUG("Forcing souphttpsrc not seekable.");
+                    p->seekable = false;
+                    pthread_mutex_lock(&parser->mutex);
+                    parser->is_seekable = false;
+                    parser->force_source_not_seekable = GST_MESSAGE_SRC(msg);
+                    pthread_mutex_unlock(&parser->mutex);
+                }
+            }
         }
         break;
 
