@@ -1424,6 +1424,7 @@ static void pad_added_cb(GstElement *element, GstPad *pad, gpointer user)
 {
     struct wg_parser_stream *stream;
     struct wg_parser *parser = user;
+    const GstStructure *structure;
     GstCaps *caps;
 
     GST_LOG("parser %p, element %p, pad %p.", parser, element, pad);
@@ -1440,6 +1441,10 @@ static void pad_added_cb(GstElement *element, GstPad *pad, gpointer user)
        so I do not understand why that happens. */
     if (gst_caps_is_any(caps = gst_pad_query_caps(pad, NULL)))
         caps = gst_pad_get_current_caps(pad);
+
+    structure = gst_caps_get_structure(caps, 0);
+    if (!strncmp(gst_structure_get_name(structure), "text/", 5))
+        return;
 
     if (!(stream = create_stream(parser)))
         return;
