@@ -1932,17 +1932,17 @@ fail:
     free(object->descriptors);
     free(object->streams);
 
-    if (stream_count != UINT_MAX)
+    object->event_thread_shutdown = true;
+    object->read_thread_shutdown = true;
+    if (object->wg_parser)
         wg_parser_disconnect(object->wg_parser);
     if (object->event_thread)
     {
-        object->event_thread_shutdown = true;
         WaitForSingleObject(object->event_thread, INFINITE);
         CloseHandle(object->event_thread);
     }
     if (object->read_thread)
     {
-        object->read_thread_shutdown = true;
         WaitForSingleObject(object->read_thread, INFINITE);
         CloseHandle(object->read_thread);
     }

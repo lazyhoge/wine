@@ -2342,9 +2342,13 @@ static NTSTATUS wg_parser_disconnect(void *args)
     pthread_cond_broadcast(&parser->stream_event_cond);
     pthread_mutex_unlock(&parser->mutex);
 
-    gst_element_set_state(parser->container, GST_STATE_NULL);
-    gst_object_unref(parser->my_src);
-    parser->my_src = NULL;
+    if (parser->container)
+        gst_element_set_state(parser->container, GST_STATE_NULL);
+    if (parser->my_src)
+    {
+        gst_object_unref(parser->my_src);
+        parser->my_src = NULL;
+    }
 
     pthread_mutex_lock(&parser->mutex);
     parser->sink_connected = false;
@@ -2359,9 +2363,12 @@ static NTSTATUS wg_parser_disconnect(void *args)
     free(parser->streams);
     parser->streams = NULL;
 
-    gst_element_set_bus(parser->container, NULL);
-    gst_object_unref(parser->container);
-    parser->container = NULL;
+    if (parser->container)
+    {
+        gst_element_set_bus(parser->container, NULL);
+        gst_object_unref(parser->container);
+        parser->container = NULL;
+    }
 
     g_free(parser->sink_caps);
     parser->sink_caps = NULL;
@@ -2372,7 +2379,8 @@ static NTSTATUS wg_parser_disconnect(void *args)
         parser->input_cache_chunks[i].data = NULL;
     }
 
-    gst_task_pool_cleanup(parser->task_pool);
+    if (parser->task_pool)
+        gst_task_pool_cleanup(parser->task_pool);
     return S_OK;
 }
 
@@ -2462,7 +2470,8 @@ static NTSTATUS wg_parser_destroy(void *args)
         gst_bus_set_sync_handler(parser->bus, NULL, NULL, NULL);
         gst_object_unref(parser->bus);
     }
-    gst_object_unref(parser->task_pool);
+    if (parser->task_pool)
+        gst_object_unref(parser->task_pool);
 
     if (parser->context)
         gst_context_unref(parser->context);
