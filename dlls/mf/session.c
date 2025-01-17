@@ -293,6 +293,7 @@ struct media_session
     enum command_state command_state;
     DWORD caps;
     BOOL buffering;
+    BOOL clock_started;
     CRITICAL_SECTION cs;
 };
 
@@ -1438,7 +1439,10 @@ static void session_stop(struct media_session *session)
                 session_stop_sources(session);
             }
             else if (SUCCEEDED(hr = IMFPresentationClock_Stop(session->clock)))
+            {
+                session->clock_started = FALSE;
                 session->command_state = COMMAND_STATE_STOPPING_SINKS;
+            }
             else
                 session_set_stopped(session, MESessionStopped, hr);
 
@@ -1500,7 +1504,10 @@ static void session_close(struct media_session *session)
                 session_stop_sources(session);
             }
             else if (SUCCEEDED(hr = IMFPresentationClock_Stop(session->clock)))
+            {
+                session->clock_started = FALSE;
                 session->command_state = COMMAND_STATE_CLOSING_SINKS;
+            }
             break;
         case SESSION_STATE_CLOSED:
         case SESSION_STATE_SHUT_DOWN:
@@ -3230,6 +3237,7 @@ static enum object_state session_get_object_state_for_event(MediaEventType event
 static HRESULT session_start_clock(struct media_session *session)
 {
     LONGLONG start_offset = 0;
+    MFCLOCK_STATE state;
     HRESULT hr;
 
     if (IsEqualGUID(&session->presentation.time_format, &GUID_NULL))
@@ -3244,10 +3252,23 @@ static HRESULT session_start_clock(struct media_session *session)
     else
         FIXME("Unhandled time format %s.\n", debugstr_guid(&session->presentation.time_format));
 
+    if (start_offset == PRESENTATION_CURRENT_POSITION && !session->clock_started)
+    {
+        if (SUCCEEDED(IMFPresentationClock_GetState(session->clock, 0, &state)) &&
+                state != MFCLOCK_STATE_INVALID && state != MFCLOCK_STATE_STOPPED &&
+                SUCCEEDED(IMFPresentationClock_Stop(session->clock)))
+            session->clock_started = FALSE;
+        start_offset = 0;
+    }
+
     if (FAILED(hr = IMFPresentationClock_Start(session->clock, start_offset)))
         WARN("Failed to start session clock, hr %#lx.\n", hr);
-    else if (session->buffering)
-        IMFPresentationClock_Pause(session->clock);
+    else
+    {
+        session->clock_started = TRUE;
+        if (session->buffering)
+            IMFPresentationClock_Pause(session->clock);
+    }
 
     return hr;
 }
@@ -4583,7 +4604,7 @@ static HRESULT WINAPI session_events_callback_Invoke(IMFAsyncCallback *iface, IM
             {
                 if (event_type == MEBufferingStarted)
                     IMFPresentationClock_Pause(session->clock);
-                else if (session->state == SESSION_STATE_STARTED)
+                else if (session->clock_started)
                     IMFPresentationClock_Start(session->clock, PRESENTATION_CURRENT_POSITION);
                 session->buffering = (event_type == MEBufferingStarted);
 
