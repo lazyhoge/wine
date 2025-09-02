@@ -84,6 +84,7 @@ struct wg_parser
     guint64 next_pull_offset;
     gchar *uri;
     gboolean is_web_scheme;
+    BOOL has_bytestream;
 
     pthread_t push_thread;
 
@@ -1812,7 +1813,7 @@ static gboolean activate_push(GstPad *pad, gboolean activate)
             parser->push_thread = 0;
         }
     }
-    else if (!parser->push_thread)
+    else if (!parser->push_thread && parser->has_bytestream)
     {
         int ret;
 
@@ -2119,6 +2120,7 @@ static NTSTATUS wg_parser_connect(void *args)
     {
         parser->uri = NULL;
     }
+    parser->has_bytestream = params->has_bytestream;
 
     if (!parser->bus)
     {
@@ -2402,8 +2404,7 @@ static BOOL decodebin_parser_init_gst(struct wg_parser *parser)
     GstElement *element;
     const char *type;
 
-    parser->is_web_scheme = parser->uri && (!strncmp(parser->uri, "http://", 7) || !strncmp(parser->uri, "https://", 8) ||
-                            !strncmp(parser->uri, "rtsp://", 7));
+    parser->is_web_scheme = parser->uri && !!memmem(parser->uri, min(strlen(parser->uri), 8), "://", 3);
     type = parser->is_web_scheme ? "uridecodebin" : "decodebin";
     if (!(element = create_element(type, "base")))
         return FALSE;
@@ -2575,12 +2576,14 @@ static NTSTATUS wow64_wg_parser_connect(void *args)
         wg_parser_t parser;
         PTR32 uri;
         UINT64 file_size;
+        BOOL has_bytestream;
     } *params32 = args;
     struct wg_parser_connect_params params =
     {
         .parser = params32->parser,
         .uri = ULongToPtr(params32->uri),
         .file_size = params32->file_size,
+        .has_bytestream = params32->has_bytestream,
     };
 
     return wg_parser_connect(&params);

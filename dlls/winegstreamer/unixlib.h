@@ -233,6 +233,7 @@ struct wg_parser_connect_params
     wg_parser_t parser;
     const WCHAR *uri;
     UINT64 file_size;
+    BOOL has_bytestream;
 };
 
 struct wg_parser_get_next_read_offset_params

@@ -1571,7 +1571,7 @@ static HRESULT init_stream(struct wm_reader *reader)
         goto out_destroy_parser;
     }
 
-    if (FAILED(hr = wg_parser_connect(reader->wg_parser, reader->file_size, reader->filename)))
+    if (FAILED(hr = wg_parser_connect(reader->wg_parser, reader->file_size, reader->filename, TRUE)))
     {
         ERR("Failed to connect parser, hr %#lx.\n", hr);
         goto out_shutdown_thread;
@@ -1728,7 +1728,7 @@ static HRESULT reinit_stream(struct wm_reader *reader, bool read_compressed)
         goto out_destroy_parser;
     }
 
-    if (FAILED(hr = wg_parser_connect(reader->wg_parser, reader->file_size, reader->filename)))
+    if (FAILED(hr = wg_parser_connect(reader->wg_parser, reader->file_size, reader->filename, TRUE)))
     {
         ERR("Failed to connect parser, hr %#lx.\n", hr);
         goto out_shutdown_thread;

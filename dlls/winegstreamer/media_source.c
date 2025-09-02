@@ -79,7 +79,8 @@ static ULONG WINAPI object_context_Release(IUnknown *iface)
     if (!refcount)
     {
         IMFAsyncResult_Release(context->result);
-        IMFByteStream_Release(context->stream);
+        if (context->stream)
+            IMFByteStream_Release(context->stream);
         free(context->url);
         free(context);
     }
@@ -109,7 +110,8 @@ static HRESULT object_context_create(DWORD flags, IMFByteStream *stream, const W
     context->IUnknown_iface.lpVtbl = &object_context_vtbl;
     context->refcount = 1;
     context->stream = stream;
-    IMFByteStream_AddRef(context->stream);
+    if (context->stream)
+        IMFByteStream_AddRef(context->stream);
     context->file_size = file_size;
     context->url = tmp_url;
     context->result = result;
@@ -1752,8 +1754,11 @@ static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
 
     IMFMediaEventQueue_QueueEventParamVar(source->event_queue, MEError, &GUID_NULL, MF_E_SHUTDOWN, NULL);
     IMFMediaEventQueue_Shutdown(source->event_queue);
-    IMFByteStream_Close(source->byte_stream);
-    IMFByteStream_Release(source->byte_stream);
+    if (source->byte_stream)
+    {
+        IMFByteStream_Close(source->byte_stream);
+        IMFByteStream_Release(source->byte_stream);
+    }
 
     while (source->stream_count--)
     {
@@ -1828,8 +1833,13 @@ static HRESULT media_source_create(struct object_context *context, IMFMediaSourc
     object->async_commands_callback.lpVtbl = &source_async_commands_callback_vtbl;
     object->ref = 1;
     object->byte_stream = context->stream;
-    IMFByteStream_AddRef(context->stream);
-    object->file_size = context->file_size;
+    if (!object->byte_stream)
+        object->file_size = ~(QWORD)0;
+    else
+    {
+        IMFByteStream_AddRef(object->byte_stream);
+        object->file_size = context->file_size;
+    }
     object->rate = 1.0f;
     InitializeCriticalSectionEx(&object->cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO);
     object->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": cs");
@@ -1847,14 +1857,14 @@ static HRESULT media_source_create(struct object_context *context, IMFMediaSourc
     }
     object->wg_parser = parser;
 
-    if (context->type != WG_PARSER_URIDECODEBIN)
+    if (object->byte_stream)
         object->read_thread = CreateThread(NULL, 0, read_thread, object, 0, NULL);
 
     object->event_thread = CreateThread(NULL, 0, event_thread, object, 0, NULL);
 
     object->state = SOURCE_OPENING;
 
-    if (FAILED(hr = wg_parser_connect(parser, object->file_size, context->url)))
+    if (FAILED(hr = wg_parser_connect(parser, object->file_size, context->url, object->byte_stream != NULL)))
         goto fail;
 
     stream_count = wg_parser_get_stream_count(parser);
@@ -1952,7 +1962,8 @@ fail:
         MFUnlockWorkQueue(object->async_commands_queue);
     if (object->event_queue)
         IMFMediaEventQueue_Release(object->event_queue);
-    IMFByteStream_Release(object->byte_stream);
+    if (object->byte_stream)
+        IMFByteStream_Release(object->byte_stream);
     free(object);
     return hr;
 }
@@ -2371,10 +2382,8 @@ static HRESULT WINAPI scheme_handler_BeginCreateObject(IMFSchemeHandler *iface, 
         IPropertyStore *props, IUnknown **cancel_cookie, IMFAsyncCallback *callback, IUnknown *state)
 {
     struct scheme_handler *handler = impl_from_IMFSchemeHandler(iface);
-    IMFByteStream *bytestream;
     IMFAsyncResult *result;
     IUnknown *context;
-    IStream *stream;
     HRESULT hr;
 
     TRACE("%p, %s, %#lx, %p, %p, %p, %p.\n", iface, debugstr_w(url), flags, props, cancel_cookie, callback, state);
@@ -2382,17 +2391,9 @@ static HRESULT WINAPI scheme_handler_BeginCreateObject(IMFSchemeHandler *iface, 
     if (cancel_cookie)
         *cancel_cookie = NULL;
 
-    if (FAILED(hr = CreateStreamOnHGlobal(0, TRUE, &stream)))
-        return hr;
-
-    hr = MFCreateMFByteStreamOnStream(stream, &bytestream);
-    IStream_Release(stream);
-    if (FAILED(hr))
-        return hr;
-
     if (FAILED(hr = MFCreateAsyncResult(NULL, callback, state, &result)))
         return hr;
-    if (FAILED(hr = object_context_create(flags, bytestream, url, -1, result, &context)))
+    if (FAILED(hr = object_context_create(flags, NULL, url, -1, result, &context)))
     {
         IMFAsyncResult_Release(result);
         return hr;

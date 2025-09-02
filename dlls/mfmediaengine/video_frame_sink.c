@@ -105,6 +105,8 @@ struct video_frame_sink
     CRITICAL_SECTION cs;
 };
 
+static void video_frame_sink_stream_request_sample(struct video_frame_sink *sink);
+
 static void video_frame_sink_sample_queue_set_presentation(struct video_frame_sink *sink, IMFSample *sample)
 {
     struct sample_queue *queue = &sink->queue;
@@ -165,6 +167,9 @@ static void video_frame_sink_sample_queue_flush(struct video_frame_sink *sink)
     queue->used = 0;
     queue->front = 0;
     queue->back = ARRAY_SIZE(queue->samples) - 1;
+
+    if (sink->state == SINK_STATE_RUNNING)
+        video_frame_sink_stream_request_sample(sink);
 }
 
 static void video_frame_sink_sample_queue_free(struct video_frame_sink *sink)

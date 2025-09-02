@@ -1044,6 +1044,9 @@ static HRESULT topology_loader_connect_d3d_aware_sink(IMFTopology *topology,
     DWORD upstream_output;
     HRESULT hr;
 
+    if (dxva_mode == MFTOPOLOGY_DXVA_NONE)
+        return S_OK;
+
     if (FAILED(hr = topology_node_get_object(node, &IID_IMFStreamSink, (void **)&stream_sink)))
         return hr;
 
