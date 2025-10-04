@@ -3745,6 +3745,7 @@ __ASM_GLOBAL_FUNC( __wine_unix_call_dispatcher,
                    "ldmxcsr 0x33c(%r13)\n\t"       /* amd64_thread_data()->mxcsr */
                    "movq %r8,%rdi\n\t"             /* args */
                    "callq *(%r10,%rdx,8)\n\t"
+                   "ldmxcsr " __ASM_NAME("__wine_default_mxcsr") "(%rip)\n\t"
                    "movq %rsp,%rcx\n\t"
                    "ldmxcsr 0xd8(%rcx)\n\t"        /* frame->xsave.MxCsr */
                    "movdqa 0x1c0(%rcx),%xmm6\n\t"
@@ -3796,5 +3797,11 @@ __ASM_GLOBAL_POINTER( __ASM_NAME("__wine_unix_call_dispatcher_gs_load_ptr"),
                       __ASM_LOCAL_LABEL("__wine_unix_call_dispatcher_gs_load") )
 __ASM_GLOBAL_POINTER( __ASM_NAME("__wine_unix_call_dispatcher_end_ptr"),
                       __ASM_LOCAL_LABEL("__wine_unix_call_dispatcher_end") )
+
+asm( ".section .rodata\n\t"
+     ".globl " __ASM_NAME("__wine_default_mxcsr") "\n"
+     __ASM_NAME("__wine_default_mxcsr") ":\n\t"
+     ".quad 0x1f80\n\t"
+     ".text\n\t" );
 
 #endif  /* __x86_64__ */
