@@ -270,20 +270,13 @@ NTSTATUS WINAPI RtlAddGrowableFunctionTable( void **table, RUNTIME_FUNCTION *fun
  */
 void WINAPI RtlGrowFunctionTable( void *table, DWORD count )
 {
-    struct dynamic_unwind_entry *entry;
+    struct dynamic_unwind_entry *entry = table;
 
     TRACE( "%p, %lu\n", table, count );
 
     RtlEnterCriticalSection( &dynamic_unwind_section );
-    LIST_FOR_EACH_ENTRY( entry, &dynamic_unwind_list, struct dynamic_unwind_entry, entry )
-    {
-        if (entry == table)
-        {
-            if (count > entry->count && count <= entry->max_count)
-                entry->count = count;
-            break;
-        }
-    }
+    if (count > entry->count && count <= entry->max_count)
+        entry->count = count;
     RtlLeaveCriticalSection( &dynamic_unwind_section );
 }
 
