@@ -254,8 +254,33 @@ ULONG WINAPI RtlFindSetBits(PCRTL_BITMAP lpBits, ULONG ulCount, ULONG ulHint)
   return ulRet;
 }
 
-static inline ULONG find_clear_bits( const RTL_BITMAP *bitmap, ULONG end, ULONG count, ULONG start )
+static inline ULONG find_clear_bit( const RTL_BITMAP *bitmap, ULONG end, ULONG start )
 {
+  ULONG *buffer = bitmap->Buffer, value, offset = 0, index;
+
+  buffer += start / (sizeof(*buffer) * CHAR_BIT);
+  offset = start / (sizeof(*buffer) * CHAR_BIT) * (sizeof(*buffer) * CHAR_BIT);
+  end -= offset;
+  start %= sizeof(*buffer) * CHAR_BIT;
+
+  value = ~*buffer;
+  value &= maskbits( start );
+  while (end > sizeof(*buffer) * CHAR_BIT)
+  {
+    if (BitScanForward( &index, value ))
+      return offset + index;
+
+    buffer++;
+    offset += sizeof(*buffer) * CHAR_BIT;
+    end -= sizeof(*buffer) * CHAR_BIT;
+    value = ~*buffer;
+  }
+  value &= ~maskbits( end );
+  if (BitScanForward( &index, value ))
+    return offset + index;
+  return ~0U;
+}
+
 static inline ULONG find_clear_bits( const RTL_BITMAP *bitmap, ULONG end, ULONG count, ULONG start )
 {
   for (; start < end; start++)
@@ -292,10 +317,20 @@ ULONG WINAPI RtlFindClearBits(PCRTL_BITMAP lpBits, ULONG ulCount, ULONG ulHint)
   if (ulHint + ulCount > lpBits->SizeOfBitMap)
     ulHint = 0;
 
-  ulRet = find_clear_bits(lpBits, lpBits->SizeOfBitMap, ulCount, ulHint);
-  /* Start from the beginning if we hit the end */
-  if (ulRet == ~0U && ulRet == lpBits->SizeOfBitMap - 1 && ulHint)
-    ulRet = find_clear_bits(lpBits, ulHint, ulCount, 0);
+  if (ulCount == 1)
+  {
+    ulRet = find_clear_bit(lpBits, lpBits->SizeOfBitMap, ulHint);
+    /* Start from the beginning if we hit the end */
+    if (ulRet == ~0U && ulRet == lpBits->SizeOfBitMap - 1 && ulHint)
+      ulRet = find_clear_bit(lpBits, ulHint, 0);
+  }
+  else
+  {
+    ulRet = find_clear_bits(lpBits, lpBits->SizeOfBitMap, ulCount, ulHint);
+    /* Start from the beginning if we hit the end */
+    if (ulRet == ~0U && ulRet == lpBits->SizeOfBitMap - 1 && ulHint)
+      ulRet = find_clear_bits(lpBits, ulHint, ulCount, 0);
+  }
   return ulRet;
 }
 
