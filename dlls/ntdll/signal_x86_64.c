@@ -901,29 +901,7 @@ NTSTATUS WINAPI RtlWow64SuspendThread( HANDLE thread, ULONG *count )
  */
 ULONG WINAPI RtlWalkFrameChain( void **buffer, ULONG count, ULONG flags )
 {
-    UNWIND_HISTORY_TABLE table;
-    RUNTIME_FUNCTION *func;
-    PEXCEPTION_ROUTINE handler;
-    ULONG_PTR frame, base;
-    CONTEXT context;
-    void *data;
-    ULONG i, skip = flags >> 8, num_entries = 0;
-
-    RtlCaptureContext( &context );
-
-    for (i = 0; i < count; i++)
-    {
-        func = RtlLookupFunctionEntry( context.Rip, &base, &table );
-        if (!func) break;
-        if (RtlVirtualUnwind2( UNW_FLAG_NHANDLER, base, context.Rip, func, &context, NULL,
-                               &data, &frame, NULL, NULL, NULL, &handler, 0 ))
-            break;
-        if (!context.Rip) break;
-        if (!frame || !is_valid_frame( frame )) break;
-        if (context.Rsp == (ULONG_PTR)NtCurrentTeb()->Tib.StackBase) break;
-        if (i >= skip) buffer[num_entries++] = (void *)context.Rip;
-    }
-    return num_entries;
+    return 0;
 }
 
 
