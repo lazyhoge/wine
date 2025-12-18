@@ -209,6 +209,19 @@ BOOLEAN WINAPI RtlAreBitsClear( const RTL_BITMAP *bitmap, ULONG start, ULONG cou
     return !(bitmap->Buffer[pos] & ~maskbits( end ));
 }
 
+static inline ULONG find_set_bits( const RTL_BITMAP *bitmap, ULONG end, ULONG count, ULONG start )
+{
+static inline ULONG find_set_bits( const RTL_BITMAP *bitmap, ULONG end, ULONG count, ULONG start )
+{
+  for (; start < end; start++)
+  {
+    /* FIXME: This could be made a _lot_ more efficient */
+    if (RtlAreBitsSet(bitmap, start, count))
+      return start;
+  }
+  return ~0U;
+}
+
 /*************************************************************************
  * RtlFindSetBits	[NTDLL.@]
  *
@@ -224,56 +237,32 @@ BOOLEAN WINAPI RtlAreBitsClear( const RTL_BITMAP *bitmap, ULONG start, ULONG cou
  */
 ULONG WINAPI RtlFindSetBits(PCRTL_BITMAP lpBits, ULONG ulCount, ULONG ulHint)
 {
-  ULONG ulPos, ulEnd;
+  ULONG ulRet;
 
   TRACE("(%p,%lu,%lu)\n", lpBits, ulCount, ulHint);
 
   if (!lpBits || !ulCount || ulCount > lpBits->SizeOfBitMap)
     return ~0U;
 
-  ulEnd = lpBits->SizeOfBitMap;
-
   if (ulHint + ulCount > lpBits->SizeOfBitMap)
     ulHint = 0;
 
-  ulPos = ulHint;
-
-  while (ulPos < ulEnd)
-  {
-    /* FIXME: This could be made a _lot_ more efficient */
-    if (RtlAreBitsSet(lpBits, ulPos, ulCount))
-      return ulPos;
-
-    /* Start from the beginning if we hit the end and had a hint */
-    if (ulPos == ulEnd - 1 && ulHint)
-    {
-      ulEnd = ulHint;
-      ulPos = ulHint = 0;
-    }
-    else
-      ulPos++;
-  }
-  return ~0U;
+  ulRet = find_set_bits(lpBits, lpBits->SizeOfBitMap, ulCount, ulHint);
+  /* Start from the beginning if we hit the end */
+  if (ulRet == ~0U && ulRet == lpBits->SizeOfBitMap - 1 && ulHint)
+    ulRet = find_set_bits(lpBits, ulHint, ulCount, 0);
+  return ulRet;
 }
 
 static inline ULONG find_clear_bits( const RTL_BITMAP *bitmap, ULONG end, ULONG count, ULONG start )
 {
-  ULONG end = bitmap->SizeOfBitMap;
-
-  while (start < end)
+static inline ULONG find_clear_bits( const RTL_BITMAP *bitmap, ULONG end, ULONG count, ULONG start )
+{
+  for (; start < end; start++)
   {
     /* FIXME: This could be made a _lot_ more efficient */
     if (RtlAreBitsClear(bitmap, start, count))
       return start;
-
-    /* Start from the beginning if we hit the end and started from ulHint */
-    if (start == end - 1 && ulHint)
-    {
-      end = ulHint;
-      start = ulHint = 0;
-    }
-    else
-      start++;
   }
   return ~0U;
 }
