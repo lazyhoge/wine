@@ -525,18 +525,8 @@ __ASM_GLOBAL_IMPORT(IsBadStringPtrW)
  */
 USHORT WINAPI RtlCaptureStackBackTrace( ULONG skip, ULONG count, void **buffer, ULONG *hash_ret )
 {
-    ULONG i, ret, hash;
-
     TRACE( "(%lu, %lu, %p, %p)\n", skip, count, buffer, hash_ret );
-
-    skip++;  /* skip our own frame */
-    ret = RtlWalkFrameChain( buffer, count + skip, skip << 8 );
-    if (hash_ret)
-    {
-        for (i = hash = 0; i < ret; i++) hash += (ULONG_PTR)buffer[i];
-        *hash_ret = hash;
-    }
-    return ret;
+    return 0;
 }
 
 
