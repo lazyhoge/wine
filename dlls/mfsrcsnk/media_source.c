@@ -265,6 +265,7 @@ struct media_source
     LONG refcount;
 
     CRITICAL_SECTION cs;
+    DWORD wqueue;
     IMFMediaEventQueue *queue;
     IMFByteStream *stream;
     WCHAR *url;
@@ -392,7 +393,7 @@ static void queue_media_source_read(struct media_source *source)
 {
     HRESULT hr;
 
-    if (FAILED(hr = MFPutWorkItem(MFASYNC_CALLBACK_QUEUE_STANDARD, &source->async_read_iface, NULL)))
+    if (FAILED(hr = MFPutWorkItem(source->wqueue, &source->async_read_iface, NULL)))
         ERR("Failed to queue async read for source %p, hr %#lx\n", source, hr);
     source->pending_reads++;
 }
@@ -946,9 +947,9 @@ static HRESULT WINAPI media_stream_RequestSample(IMFMediaStream *iface, IUnknown
     else if (stream->eos)
         hr = MF_E_END_OF_STREAM;
     else if (source->thin)
-        hr = MFPutWorkItem(MFASYNC_CALLBACK_QUEUE_STANDARD, &stream->async_request_thin_iface, token);
+        hr = MFPutWorkItem(source->wqueue, &stream->async_request_thin_iface, token);
     else
-        hr = MFPutWorkItem(MFASYNC_CALLBACK_QUEUE_STANDARD, &stream->async_request_iface, token);
+        hr = MFPutWorkItem(source->wqueue, &stream->async_request_iface, token);
 
     LeaveCriticalSection(&source->cs);
 
@@ -1180,7 +1181,7 @@ static HRESULT WINAPI media_source_IMFRateControl_SetRate(IMFRateControl *iface,
     if (FAILED(hr = async_set_rate_params_create(rate, thin, &params)))
         return hr;
 
-    hr = MFPutWorkItem(MFASYNC_CALLBACK_QUEUE_STANDARD, &source->async_set_rate_iface, params);
+    hr = MFPutWorkItem(source->wqueue, &source->async_set_rate_iface, params);
     IUnknown_Release(params);
 
     return hr;
@@ -1397,7 +1398,7 @@ static HRESULT WINAPI media_source_Start(IMFMediaSource *iface, IMFPresentationD
         hr = MF_E_UNSUPPORTED_TIME_FORMAT;
     else if (SUCCEEDED(hr = async_start_params_create(descriptor, format, position, &op)))
     {
-        hr = MFPutWorkItem(MFASYNC_CALLBACK_QUEUE_STANDARD, &source->async_start_iface, op);
+        hr = MFPutWorkItem(source->wqueue, &source->async_start_iface, op);
         IUnknown_Release(op);
     }
 
@@ -1418,7 +1419,7 @@ static HRESULT WINAPI media_source_Stop(IMFMediaSource *iface)
     if (source->state == SOURCE_SHUTDOWN)
         hr = MF_E_SHUTDOWN;
     else
-        hr = MFPutWorkItem(MFASYNC_CALLBACK_QUEUE_STANDARD, &source->async_stop_iface, NULL);
+        hr = MFPutWorkItem(source->wqueue, &source->async_stop_iface, NULL);
 
     LeaveCriticalSection(&source->cs);
 
@@ -1439,7 +1440,7 @@ static HRESULT WINAPI media_source_Pause(IMFMediaSource *iface)
     else if (source->state != SOURCE_RUNNING)
         hr = MF_E_INVALID_STATE_TRANSITION;
     else
-        hr = MFPutWorkItem(MFASYNC_CALLBACK_QUEUE_STANDARD, &source->async_pause_iface, NULL);
+        hr = MFPutWorkItem(source->wqueue, &source->async_pause_iface, NULL);
 
     LeaveCriticalSection(&source->cs);
 
@@ -1900,8 +1901,15 @@ static HRESULT media_source_create(const WCHAR *url, IMFByteStream *stream, IMFM
     source->async_set_rate_iface.lpVtbl = &media_source_async_set_rate_vtbl;
     source->refcount = 1;
 
+    if (FAILED(hr = MFAllocateSerialWorkQueue(MFASYNC_CALLBACK_QUEUE_MULTITHREADED, &source->wqueue)))
+    {
+        free(source);
+        return hr;
+    }
+
     if (FAILED(hr = MFCreateEventQueue(&source->queue)))
     {
+        MFUnlockWorkQueue(source->wqueue);
         free(source);
         return hr;
     }
