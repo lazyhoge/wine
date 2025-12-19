@@ -271,6 +271,7 @@ struct media_session
     IMFAsyncCallback events_callback;
     IMFAsyncCallback sink_finalizer_callback;
     LONG refcount;
+    DWORD queue;
     IMFMediaEventQueue *event_queue;
     IMFPresentationClock *clock;
     IMFPresentationTimeSource *system_time_source;
@@ -515,7 +516,7 @@ static HRESULT session_submit_command(struct media_session *session, struct sess
         session->presentation.flags &= ~SESSION_FLAG_PRESENTATION_ENDING;
         if (list_empty(&session->commands) && session->command_state == COMMAND_STATE_COMPLETE)
         {
-            hr = MFPutWorkItem(MFASYNC_CALLBACK_QUEUE_STANDARD, &session->commands_callback, &op->IUnknown_iface);
+            hr = MFPutWorkItem(session->queue, &session->commands_callback, &op->IUnknown_iface);
             /* Since session->commands is empty, whether `op` is added to head or tail, it will
              * always be at the head of this list, thus the invariant holds. */
             if (SUCCEEDED(hr)) session->command_state = COMMAND_STATE_SUBMITTED;
@@ -1057,7 +1058,7 @@ static void session_command_complete(struct media_session *session)
     if ((e = list_head(&session->commands)))
     {
         op = LIST_ENTRY(e, struct session_op, entry);
-        hr = MFPutWorkItem(MFASYNC_CALLBACK_QUEUE_STANDARD, &session->commands_callback, &op->IUnknown_iface);
+        hr = MFPutWorkItem(session->queue, &session->commands_callback, &op->IUnknown_iface);
         if (SUCCEEDED(hr)) session->command_state = COMMAND_STATE_SUBMITTED;
     }
 }
@@ -2082,7 +2083,7 @@ static HRESULT session_request_sample_from_node(struct media_session *session, s
 static HRESULT WINAPI node_sample_allocator_cb_NotifyRelease(IMFVideoSampleAllocatorNotify *iface)
 {
     struct topo_node *topo_node = impl_node_from_IMFVideoSampleAllocatorNotify(iface);
-    MFPutWorkItem(MFASYNC_CALLBACK_QUEUE_STANDARD, &topo_node->session->sa_ready_callback, (IUnknown *)iface);
+    MFPutWorkItem(topo_node->session->queue, &topo_node->session->sa_ready_callback, (IUnknown *)iface);
     return S_OK;
 }
 
@@ -2478,6 +2479,8 @@ static ULONG WINAPI mfsession_Release(IMFMediaSession *iface)
             IMFTopoLoader_Release(session->topo_loader);
         if (session->quality_manager)
             IMFQualityManager_Release(session->quality_manager);
+        if (session->queue)
+            MFUnlockWorkQueue(session->queue);
         DeleteCriticalSection(&session->cs);
         free(session);
     }
@@ -5362,6 +5365,9 @@ HRESULT WINAPI MFCreateMediaSession(IMFAttributes *config, IMFMediaSession **ses
     list_init(&object->presentation.nodes);
     object->presentation.rate = 1.0f;
     InitializeCriticalSection(&object->cs);
+
+    if (FAILED(hr = MFAllocateSerialWorkQueue(MFASYNC_CALLBACK_QUEUE_MULTITHREADED, &object->queue)))
+        goto failed;
 
     if (FAILED(hr = MFCreateTopology(&object->presentation.current_topology)))
         goto failed;
