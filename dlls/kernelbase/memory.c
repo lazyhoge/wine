@@ -235,8 +235,17 @@ static void fill_system_info( SYSTEM_INFO *si, const SYSTEM_BASIC_INFORMATION *b
  */
 void WINAPI DECLSPEC_HOTPATCH GetNativeSystemInfo( SYSTEM_INFO *si )
 {
+    static SYSTEM_INFO cached;
+    static BOOL initialized;
+
     SYSTEM_BASIC_INFORMATION basic_info;
     SYSTEM_CPU_INFORMATION cpu_info;
+
+    if (initialized)
+    {
+        memcpy( si, &cached, sizeof(*si) );
+        return;
+    }
 
     if (is_wow64)
     {
@@ -257,7 +266,9 @@ void WINAPI DECLSPEC_HOTPATCH GetNativeSystemInfo( SYSTEM_INFO *si )
                                                       &cpu_info, sizeof(cpu_info), NULL )))
         return;
 
-    fill_system_info( si, &basic_info, &cpu_info );
+    fill_system_info( &cached, &basic_info, &cpu_info );
+    initialized = TRUE;
+    memcpy( si, &cached, sizeof(*si) );
 }
 
 
@@ -266,8 +277,17 @@ void WINAPI DECLSPEC_HOTPATCH GetNativeSystemInfo( SYSTEM_INFO *si )
  */
 void WINAPI DECLSPEC_HOTPATCH GetSystemInfo( SYSTEM_INFO *si )
 {
+    static SYSTEM_INFO cached;
+    static BOOL initialized;
+
     SYSTEM_BASIC_INFORMATION basic_info;
     SYSTEM_CPU_INFORMATION cpu_info;
+
+    if (initialized)
+    {
+        memcpy( si, &cached, sizeof(*si) );
+        return;
+    }
 
     if (!set_ntstatus( NtQuerySystemInformation( SystemBasicInformation,
                                                  &basic_info, sizeof(basic_info), NULL )) ||
@@ -275,7 +295,9 @@ void WINAPI DECLSPEC_HOTPATCH GetSystemInfo( SYSTEM_INFO *si )
                                                  &cpu_info, sizeof(cpu_info), NULL )))
         return;
 
-    fill_system_info( si, &basic_info, &cpu_info );
+    fill_system_info( &cached, &basic_info, &cpu_info );
+    initialized = TRUE;
+    memcpy( si, &cached, sizeof(*si) );
 }
 
 
