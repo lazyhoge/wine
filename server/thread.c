@@ -263,7 +263,18 @@ static void apply_thread_priority( struct thread *thread )
 
     if (nice_limit >= 0) return;
 
-    /* FIXME: handle realtime priorities using SCHED_RR if possible */
+    if (effective_priority >= LOW_REALTIME_PRIORITY)
+    {
+        int realtime_priority = effective_priority - LOW_REALTIME_PRIORITY + 1;
+        int policy = realtime_priority > 8 ? SCHED_FIFO : SCHED_RR;
+        struct sched_param param;
+
+        memset( &param, 0, sizeof(param) );
+        param.sched_priority = realtime_priority;
+        if (!sched_setscheduler( thread->unix_tid, policy | SCHED_RESET_ON_FORK, &param ))
+            return;
+    }
+
     if (effective_priority >= LOW_REALTIME_PRIORITY) effective_priority = LOW_REALTIME_PRIORITY - 1;
     /* map an NT application band [1,15] priority to [-nice_limit, nice_limit] */
     niceness = (min + (effective_priority - 1) * range / 14);
