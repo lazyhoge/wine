@@ -2010,6 +2010,66 @@ BOOL get_thread_times(int unix_pid, int unix_tid, LARGE_INTEGER *kernel_time, LA
 #endif
 }
 
+struct thread_settings
+{
+    const char *thread_name;
+    DWORD prio;
+};
+
+struct thread_settings settings[] = {
+    { "audio_client_timer", THREAD_PRIORITY_TIME_CRITICAL },
+    { "audio_client_main", THREAD_PRIORITY_TIME_CRITICAL },
+
+    { "dxvk-cs", THREAD_PRIORITY_TIME_CRITICAL },
+    { "dxvk-descriptor", THREAD_PRIORITY_TIME_CRITICAL },
+    { "dxvk-queue", THREAD_PRIORITY_TIME_CRITICAL },
+    { "dxvk-submit", THREAD_PRIORITY_TIME_CRITICAL },
+    { "dxvk-frame", THREAD_PRIORITY_HIGHEST },
+
+    { "UnityGfxDeviceWorker", THREAD_PRIORITY_HIGHEST },
+    { "Timer-Scheduler", THREAD_PRIORITY_HIGHEST },
+
+    { "IL2CPP Threadpool worker", THREAD_PRIORITY_HIGHEST },
+};
+
+static void handle_thread_name( const UNICODE_STRING *name )
+{
+    char nameA[64], *endp = NULL;
+    struct thread_settings *p;
+    DWORD prio;
+    long wnum;
+    int len;
+
+    len = ntdll_wcstoumbs( name->Buffer, name->Length / sizeof(WCHAR), nameA, sizeof(nameA), FALSE );
+    nameA[len] = 0;
+
+    for (p = settings; p < &settings[ARRAY_SIZE(settings)]; p++)
+    {
+        if (!strcmp( nameA, p->thread_name ))
+        {
+            NtSetInformationThread( GetCurrentThread(), ThreadBasePriority, &p->prio, sizeof(p->prio) );
+            return;
+        }
+    }
+
+    if (!strncmp( nameA, "Job.worker ", 11 ) && nameA[11] != '\0')
+    {
+        wnum = strtol( &nameA[11], &endp, 10 );
+        if (endp != NULL && endp != &nameA[11] && *endp == '\0')
+        {
+            if (wnum == 0)
+                /* Worker 0 seems to have the lowest precedence, so should have highest priority. */
+                prio = THREAD_PRIORITY_TIME_CRITICAL;
+            else if (wnum <= 5)
+                prio = THREAD_PRIORITY_ABOVE_NORMAL;
+            else
+                prio = THREAD_PRIORITY_HIGHEST;
+            NtSetInformationThread( GetCurrentThread(), ThreadBasePriority, &prio, sizeof(prio) );
+            return;
+        }
+    }
+}
+
 static void set_native_thread_name( HANDLE handle, const UNICODE_STRING *name )
 {
 #ifdef linux
@@ -2039,6 +2099,8 @@ static void set_native_thread_name( HANDLE handle, const UNICODE_STRING *name )
         return;
     }
 
+    handle_thread_name(name);
+
     len = ntdll_wcstoumbs( name->Buffer, name->Length / sizeof(WCHAR), nameA, sizeof(nameA), FALSE );
     snprintf(path, sizeof(path), "/proc/%u/task/%u/comm", unix_pid, unix_tid);
     if ((fd = open( path, O_WRONLY )) != -1)
@@ -2067,6 +2129,8 @@ static void set_native_thread_name( HANDLE handle, const UNICODE_STRING *name )
         if (!once++) FIXME("setting other thread name not supported\n");
         return;
     }
+
+    handle_thread_name(name);
 
     len = ntdll_wcstoumbs( name->Buffer, name->Length / sizeof(WCHAR), nameA, sizeof(nameA) - 1, FALSE );
     nameA[len] = '\0';
@@ -2098,12 +2162,16 @@ static void set_native_thread_name( HANDLE handle, const UNICODE_STRING *name )
         return;
     }
 
+    handle_thread_name(name);
+
     len = ntdll_wcstoumbs( name->Buffer, name->Length / sizeof(WCHAR), nameA, sizeof(nameA), FALSE );
     nameA[len] = '\0';
     thr_set_name( unix_tid, nameA );
 #else
     static int once;
     if (!once++) FIXME("not implemented on this platform\n");
+
+    handle_thread_name(name);
 #endif
 }
 
