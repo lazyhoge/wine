@@ -1287,7 +1287,9 @@ static void DoneEdgeDict( GLUtesselator *tess )
      */
     if( ! reg->sentinel ) {
       assert( reg->fixUpperEdge );
+#ifndef NDEBUG
       assert( ++fixedEdges == 1 );
+#endif
     }
     assert( reg->windingNumber == 0 );
     DeleteRegion( tess, reg );

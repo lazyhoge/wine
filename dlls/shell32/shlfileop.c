@@ -1219,6 +1219,7 @@ static DWORD do_copy_move(FILE_OPERATION *op, const FILE_ENTRY *from, const FILE
         default:
             assert(0); /* Should never be here. */
     }
+    return DE_OPCANCELLED;
 }
 
 /* The FO_COPY operation. */
@@ -1336,7 +1337,7 @@ static int delete_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom)
                 break;
             }
         }
-        
+
         /* delete the file or directory */
         if (IsAttribFile(fileEntry->attributes))
             ret = DeleteFileW(fileEntry->szFullPath) ?

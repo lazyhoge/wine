@@ -652,6 +652,7 @@ static void init_stock_objects( unsigned int dpi )
 
     obj = NtGdiCreateBitmap( 1, 1, 1, 1, NULL );
 
+    (void)obj;
     assert( (HandleToULong( obj ) & 0xffff) == FIRST_GDI_HANDLE + DEFAULT_BITMAP );
 
     create_scaled_font( &deffonts->SystemFont, dpi );

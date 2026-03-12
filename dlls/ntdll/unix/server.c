@@ -1786,6 +1786,7 @@ void server_init_process_done(void)
     }
     SERVER_END_REQ;
 
+    (void)status;
     assert( !status );
     signal_start_thread( main_image_info.TransferAddress, peb, suspend, NtCurrentTeb() );
 }

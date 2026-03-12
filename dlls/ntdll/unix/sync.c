@@ -608,6 +608,7 @@ static struct inproc_sync *cache_inproc_sync( HANDLE handle, struct inproc_sync 
      * release semantics [paired with the load in get_cached_inproc_sync()].
      * Set the refcount to 2 (one for the handle, one for the caller). */
     refcount = InterlockedExchange( &cache->refcount, 2 );
+    (void)refcount;
     assert( !refcount );
 
     assert( sync->refcount == 1 );

@@ -420,7 +420,7 @@ void output_exports( DLLSPEC *spec )
         for (i = exports->base; i <= exports->limit; i++)
         {
             ORDDEF *odp = exports->ordinals[i];
-            const char *symbol;
+            const char *symbol = NULL;
 
             if (!odp) continue;
             if (odp->flags & FLAG_FORWARD)

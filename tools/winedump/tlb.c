@@ -1955,15 +1955,19 @@ static void sltg_dump(void)
 
     for (i = n_first_blk - 1; entry[i].next != 0; i = entry[i].next - 1)
     {
+#ifndef NDEBUG
         short magic;
+#endif
         char name[32];
 
         saved_offset = offset;
 
         sprintf(name, "Block %d", i);
         print_begin_block(name);
+#ifndef NDEBUG
         magic = tlb_read_short();
         assert(magic == 0x0501);
+#endif
         offset -= 2;
         dump_binary(entry[i].len);
         print_end_block();

@@ -2414,6 +2414,7 @@ void format_from_d3dx_color(const struct pixel_format_desc *format, const struct
         /* We shouldn't be trying to output to CTYPE_INDEX or CTYPE_SHILO. */
         case CTYPE_INDEX:
         case CTYPE_SHILO:
+            v = 0;
             assert(0);
             break;
 
