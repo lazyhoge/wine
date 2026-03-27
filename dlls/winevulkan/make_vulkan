@@ -651,7 +651,9 @@ class VkFunction(object):
         # vkCmd* functions are frequently called, do not trace for performance
         if self.name.startswith("vkCmd") and self.type == "void":
             return True
-        return self.name in PERF_CRITICAL_FUNCTIONS
+        if self.name == "vkDestroyInstance" or self.name == "vkDestroyDevice":
+            return False
+        return self.type == "void" or self.name in PERF_CRITICAL_FUNCTIONS
 
     def pfn(self, prefix="p", call_conv=None):
         """ Create function pointer. """
@@ -686,7 +688,10 @@ class VkFunction(object):
             prefix (str, optional): prefix to append prior to function name e.g. vkFoo -> wine_vkFoo
         """
 
-        proto = "{0}".format(self.type)
+        if self.type == "void" and is_thunk:
+            proto = "NTSTATUS"
+        else:
+            proto = "{0}".format(self.type)
 
         if call_conv is not None:
             proto += " {0}".format(call_conv)

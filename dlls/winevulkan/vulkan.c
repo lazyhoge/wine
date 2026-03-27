@@ -469,13 +469,14 @@ VkResult wine_vkEnumeratePhysicalDevices(VkInstance client_instance, uint32_t *c
     return *count < instance->physical_device_count ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
-void wine_vkFreeCommandBuffers(VkDevice client_device, VkCommandPool command_pool, uint32_t count,
-                               const VkCommandBuffer *buffers)
+NTSTATUS wine_vkFreeCommandBuffers(VkDevice client_device, VkCommandPool command_pool, uint32_t count,
+                                   const VkCommandBuffer *buffers)
 {
     struct vulkan_device *device = vulkan_device_from_handle(client_device);
     struct wine_cmd_pool *pool = wine_cmd_pool_from_handle(command_pool);
 
     wine_vk_free_command_buffers(device, pool, count, buffers);
+    return STATUS_SUCCESS;
 }
 
 VkResult wine_vkCreateCommandPool(VkDevice client_device, const VkCommandPoolCreateInfo *info,
@@ -509,7 +510,7 @@ VkResult wine_vkCreateCommandPool(VkDevice client_device, const VkCommandPoolCre
     return VK_SUCCESS;
 }
 
-void wine_vkDestroyCommandPool(VkDevice client_device, VkCommandPool handle,
+NTSTATUS wine_vkDestroyCommandPool(VkDevice client_device, VkCommandPool handle,
                                const VkAllocationCallbacks *allocator)
 {
     struct vulkan_device *device = vulkan_device_from_handle(client_device);
@@ -522,6 +523,7 @@ void wine_vkDestroyCommandPool(VkDevice client_device, VkCommandPool handle,
     device->p_vkDestroyCommandPool(device->host.device, pool->host.command_pool, NULL);
     instance->p_remove_object(instance, &pool->obj);
     free(pool);
+    return STATUS_SUCCESS;
 }
 
 static VkResult wine_vk_enumerate_physical_device_groups(struct vulkan_instance *instance,
@@ -568,22 +570,24 @@ VkResult wine_vkEnumeratePhysicalDeviceGroupsKHR(VkInstance client_instance, uin
             instance->p_vkEnumeratePhysicalDeviceGroupsKHR, count, properties);
 }
 
-void wine_vkGetPhysicalDeviceExternalFenceProperties(VkPhysicalDevice client_physical_device,
-                                                     const VkPhysicalDeviceExternalFenceInfo *fence_info,
-                                                     VkExternalFenceProperties *properties)
+NTSTATUS wine_vkGetPhysicalDeviceExternalFenceProperties(VkPhysicalDevice client_physical_device,
+                                                         const VkPhysicalDeviceExternalFenceInfo *fence_info,
+                                                         VkExternalFenceProperties *properties)
 {
     properties->exportFromImportedHandleTypes = 0;
     properties->compatibleHandleTypes = 0;
     properties->externalFenceFeatures = 0;
+    return STATUS_SUCCESS;
 }
 
-void wine_vkGetPhysicalDeviceExternalFencePropertiesKHR(VkPhysicalDevice client_physical_device,
-                                                        const VkPhysicalDeviceExternalFenceInfo *fence_info,
-                                                        VkExternalFenceProperties *properties)
+NTSTATUS wine_vkGetPhysicalDeviceExternalFencePropertiesKHR(VkPhysicalDevice client_physical_device,
+                                                            const VkPhysicalDeviceExternalFenceInfo *fence_info,
+                                                            VkExternalFenceProperties *properties)
 {
     properties->exportFromImportedHandleTypes = 0;
     properties->compatibleHandleTypes = 0;
     properties->externalFenceFeatures = 0;
+    return STATUS_SUCCESS;
 }
 
 /* From ntdll/unix/sync.c */
@@ -803,22 +807,24 @@ done:
     return res;
 }
 
-void wine_vkGetPhysicalDeviceExternalSemaphoreProperties(VkPhysicalDevice client_physical_device,
-                                                         const VkPhysicalDeviceExternalSemaphoreInfo *info,
-                                                         VkExternalSemaphoreProperties *properties)
+NTSTATUS wine_vkGetPhysicalDeviceExternalSemaphoreProperties(VkPhysicalDevice client_physical_device,
+                                                             const VkPhysicalDeviceExternalSemaphoreInfo *info,
+                                                             VkExternalSemaphoreProperties *properties)
 {
     properties->exportFromImportedHandleTypes = 0;
     properties->compatibleHandleTypes = 0;
     properties->externalSemaphoreFeatures = 0;
+    return STATUS_SUCCESS;
 }
 
-void wine_vkGetPhysicalDeviceExternalSemaphorePropertiesKHR(VkPhysicalDevice client_physical_device,
-                                                            const VkPhysicalDeviceExternalSemaphoreInfo *info,
-                                                            VkExternalSemaphoreProperties *properties)
+NTSTATUS wine_vkGetPhysicalDeviceExternalSemaphorePropertiesKHR(VkPhysicalDevice client_physical_device,
+                                                                const VkPhysicalDeviceExternalSemaphoreInfo *info,
+                                                                VkExternalSemaphoreProperties *properties)
 {
     properties->exportFromImportedHandleTypes = 0;
     properties->compatibleHandleTypes = 0;
     properties->externalSemaphoreFeatures = 0;
+    return STATUS_SUCCESS;
 }
 
 VkResult wine_vkCreateDebugUtilsMessengerEXT(VkInstance client_instance,
@@ -860,7 +866,7 @@ VkResult wine_vkCreateDebugUtilsMessengerEXT(VkInstance client_instance,
     return VK_SUCCESS;
 }
 
-void wine_vkDestroyDebugUtilsMessengerEXT(VkInstance client_instance, VkDebugUtilsMessengerEXT messenger,
+NTSTATUS wine_vkDestroyDebugUtilsMessengerEXT(VkInstance client_instance, VkDebugUtilsMessengerEXT messenger,
                                           const VkAllocationCallbacks *allocator)
 {
     struct vulkan_instance *instance = vulkan_instance_from_handle(client_instance);
@@ -869,12 +875,13 @@ void wine_vkDestroyDebugUtilsMessengerEXT(VkInstance client_instance, VkDebugUti
     object = vulkan_debug_utils_messenger_from_handle(messenger);
 
     if (!object)
-        return;
+        return STATUS_SUCCESS;
 
     instance->p_vkDestroyDebugUtilsMessengerEXT(instance->host.instance, object->host.debug_messenger, NULL);
     instance->p_remove_object(instance, &object->obj);
 
     free(object);
+    return STATUS_SUCCESS;
 }
 
 VkResult wine_vkCreateDebugReportCallbackEXT(VkInstance client_instance,
@@ -916,7 +923,7 @@ VkResult wine_vkCreateDebugReportCallbackEXT(VkInstance client_instance,
     return VK_SUCCESS;
 }
 
-void wine_vkDestroyDebugReportCallbackEXT(VkInstance client_instance, VkDebugReportCallbackEXT callback,
+NTSTATUS wine_vkDestroyDebugReportCallbackEXT(VkInstance client_instance, VkDebugReportCallbackEXT callback,
                                           const VkAllocationCallbacks *allocator)
 {
     struct vulkan_instance *instance = vulkan_instance_from_handle(client_instance);
@@ -925,12 +932,13 @@ void wine_vkDestroyDebugReportCallbackEXT(VkInstance client_instance, VkDebugRep
     object = vulkan_debug_report_callback_from_handle(callback);
 
     if (!object)
-        return;
+        return STATUS_SUCCESS;
 
     instance->p_vkDestroyDebugReportCallbackEXT(instance->host.instance, object->host.debug_callback, NULL);
     instance->p_remove_object(instance, &object->obj);
 
     free(object);
+    return STATUS_SUCCESS;
 }
 
 VkResult wine_vkCreateDeferredOperationKHR(VkDevice device_handle,
@@ -964,7 +972,7 @@ VkResult wine_vkCreateDeferredOperationKHR(VkDevice device_handle,
     return VK_SUCCESS;
 }
 
-void wine_vkDestroyDeferredOperationKHR(VkDevice device_handle,
+NTSTATUS wine_vkDestroyDeferredOperationKHR(VkDevice device_handle,
                                         VkDeferredOperationKHR       operation,
                                         const VkAllocationCallbacks* allocator)
 {
@@ -975,13 +983,14 @@ void wine_vkDestroyDeferredOperationKHR(VkDevice device_handle,
     object = wine_deferred_operation_from_handle(operation);
 
     if (!object)
-        return;
+        return STATUS_SUCCESS;
 
     device->p_vkDestroyDeferredOperationKHR(device->host.device, object->host.deferred_operation, NULL);
     instance->p_remove_object(instance, &object->obj);
 
     free_conversion_context(&object->ctx);
     free(object);
+    return STATUS_SUCCESS;
 }
 
 static NTSTATUS is_available_instance_function(VkInstance handle, const char *name)
