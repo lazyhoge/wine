@@ -1563,21 +1563,11 @@ static HRESULT WINAPI media_engine_load_handler_Invoke(IMFAsyncCallback *iface, 
     }
     else
     {
-        static unsigned int once;
-        char sgi[64];
-
-        if (GetEnvironmentVariableA("SteamGameId", sgi, sizeof(sgi)) && !strcmp(sgi, "438100"))
-        {
-            if (!once++) FIXME("HACK: not sending MF_MEDIA_ENGINE_EVENT_ERROR event.\n");
-        }
-        else
-        {
-            engine->network_state = MF_MEDIA_ENGINE_NETWORK_NO_SOURCE;
-            engine->error_code = MF_MEDIA_ENGINE_ERR_SRC_NOT_SUPPORTED;
-            engine->extended_code = hr;
-            IMFMediaEngineNotify_EventNotify(engine->callback, MF_MEDIA_ENGINE_EVENT_ERROR, engine->error_code,
-                    engine->extended_code);
-        }
+        engine->network_state = MF_MEDIA_ENGINE_NETWORK_NO_SOURCE;
+        engine->error_code = MF_MEDIA_ENGINE_ERR_SRC_NOT_SUPPORTED;
+        engine->extended_code = hr;
+        IMFMediaEngineNotify_EventNotify(engine->callback, MF_MEDIA_ENGINE_EVENT_ERROR, engine->error_code,
+                engine->extended_code);
     }
 
     LeaveCriticalSection(&engine->cs);
