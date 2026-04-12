@@ -47,14 +47,19 @@ static enum wg_audio_format wg_audio_format_from_gst(GstAudioFormat format)
         case GST_AUDIO_FORMAT_U8:
             return WG_AUDIO_FORMAT_U8;
         case GST_AUDIO_FORMAT_S16LE:
+        case GST_AUDIO_FORMAT_S16BE:
             return WG_AUDIO_FORMAT_S16LE;
         case GST_AUDIO_FORMAT_S24LE:
+        case GST_AUDIO_FORMAT_S24BE:
             return WG_AUDIO_FORMAT_S24LE;
         case GST_AUDIO_FORMAT_S32LE:
+        case GST_AUDIO_FORMAT_S32BE:
             return WG_AUDIO_FORMAT_S32LE;
         case GST_AUDIO_FORMAT_F32LE:
+        case GST_AUDIO_FORMAT_F32BE:
             return WG_AUDIO_FORMAT_F32LE;
         case GST_AUDIO_FORMAT_F64LE:
+        case GST_AUDIO_FORMAT_F64BE:
             return WG_AUDIO_FORMAT_F64LE;
         default:
             return WG_AUDIO_FORMAT_UNKNOWN;
