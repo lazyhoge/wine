@@ -89,6 +89,7 @@ struct wg_parser
     pthread_t push_thread;
 
     pthread_mutex_t mutex;
+    bool shutdown;
 
     pthread_cond_t init_cond;
     bool output_compressed;
@@ -97,6 +98,7 @@ struct wg_parser
 
     pthread_cond_t read_cond, read_done_cond;
     pthread_cond_t stream_event_cond;
+    uint64_t active_readers, active_event_readers, active_writers;
     struct
     {
         GstBuffer *buffer;
@@ -200,8 +202,19 @@ static NTSTATUS wg_parser_get_next_read_offset(void *args)
 
     pthread_mutex_lock(&parser->mutex);
 
-    while (parser->sink_connected && !parser->read_request.size)
+    parser->active_writers++;
+
+    while (parser->sink_connected && !parser->read_request.size && !parser->shutdown)
         pthread_cond_wait(&parser->read_cond, &parser->mutex);
+
+    if (--parser->active_writers == 0 && parser->shutdown)
+        pthread_cond_broadcast(&parser->read_cond);
+
+    if (parser->shutdown)
+    {
+        pthread_mutex_unlock(&parser->mutex);
+        return MF_E_SHUTDOWN;
+    }
 
     if (!parser->sink_connected)
     {
@@ -267,8 +280,19 @@ static NTSTATUS wg_parser_get_next_event(void *args)
 
     pthread_mutex_lock(&parser->mutex);
 
-    while (parser->sink_connected && (parser->buffering == parser->sent_buffering_event))
+    parser->active_event_readers++;
+
+    while (parser->sink_connected && (parser->buffering == parser->sent_buffering_event) && !parser->shutdown)
         pthread_cond_wait(&parser->stream_event_cond, &parser->mutex);
+
+    if (--parser->active_event_readers == 0 && parser->shutdown)
+        pthread_cond_broadcast(&parser->stream_event_cond);
+
+    if (parser->shutdown)
+    {
+        pthread_mutex_unlock(&parser->mutex);
+        return MF_E_SHUTDOWN;
+    }
 
     if (!parser->sink_connected)
     {
@@ -332,13 +356,19 @@ static BOOL stream_set_next_caps(struct wg_parser_stream *stream, GstCaps *caps)
 {
     struct wg_parser *parser = stream->parser;
 
-    while (stream->next_desired_caps && !parser->error)
+    while (stream->next_desired_caps && !parser->error && !parser->shutdown)
         pthread_cond_wait(&parser->stream_event_cond, &parser->mutex);
 
     if (parser->error)
     {
         pthread_mutex_unlock(&parser->mutex);
         return E_FAIL;
+    }
+
+    if (parser->shutdown)
+    {
+        pthread_mutex_unlock(&parser->mutex);
+        return MF_E_SHUTDOWN;
     }
 
     if (!(stream->current_caps && gst_caps_is_equal(stream->current_caps, caps)))
@@ -426,7 +456,7 @@ static GstBuffer *wait_parser_stream_buffer(struct wg_parser *parser, struct wg_
     /* Note that we can both have a buffer and stream->eos, in which case we
      * must return the buffer. */
 
-    while (stream->enabled && !(buffer = stream->buffer) && !stream->eos)
+    while (stream->enabled && !(buffer = stream->buffer) && !stream->eos && !parser->shutdown)
         pthread_cond_wait(&parser->stream_event_cond, &parser->mutex);
 
     return buffer;
@@ -455,6 +485,8 @@ static NTSTATUS wg_parser_stream_get_buffer(void *args)
     unsigned int i;
 
     pthread_mutex_lock(&parser->mutex);
+
+    parser->active_readers++;
 
 retry:
     if (stream)
@@ -493,7 +525,10 @@ retry:
         buffer = earliest;
     }
 
-    if (!buffer)
+    if (--parser->active_readers == 0 && parser->shutdown)
+        pthread_cond_broadcast(&parser->stream_event_cond);
+
+    if (!buffer || parser->shutdown)
     {
         pthread_mutex_unlock(&parser->mutex);
         return S_FALSE;
@@ -540,6 +575,12 @@ static NTSTATUS wg_parser_stream_copy_buffer(void *args)
     uint32_t size = params->size;
 
     pthread_mutex_lock(&parser->mutex);
+
+    if (parser->shutdown)
+    {
+        pthread_mutex_unlock(&parser->mutex);
+        return MF_E_SHUTDOWN;
+    }
 
     if (!stream->buffer || !stream->get_buffer_called)
     {
@@ -1543,8 +1584,14 @@ static GstFlowReturn issue_read_request(struct wg_parser *parser, guint64 offset
      * the upstream pin to flush if necessary. We should never be blocked on
      * read_thread() not running. */
 
-    while (!parser->read_request.done)
+    while (!parser->read_request.done && !parser->shutdown)
         pthread_cond_wait(&parser->read_done_cond, &parser->mutex);
+
+    if (parser->shutdown)
+    {
+        pthread_mutex_unlock(&parser->mutex);
+        return GST_FLOW_EOS;
+    }
 
     *buffer = parser->read_request.buffer;
     ret = parser->read_request.ret;
@@ -2352,9 +2399,15 @@ static NTSTATUS wg_parser_disconnect(void *args)
 
     /* Unblock all of our streams. */
     pthread_mutex_lock(&parser->mutex);
+    parser->shutdown = true;
     for (i = 0; i < parser->stream_count; ++i)
+    {
         parser->streams[i]->flushing = true;
+        parser->streams[i]->eos = true;
+    }
     pthread_cond_broadcast(&parser->stream_event_cond);
+    while (parser->active_readers || parser->active_event_readers)
+        pthread_cond_wait(&parser->stream_event_cond, &parser->mutex);
     pthread_mutex_unlock(&parser->mutex);
 
     if (parser->container)
@@ -2367,9 +2420,11 @@ static NTSTATUS wg_parser_disconnect(void *args)
 
     pthread_mutex_lock(&parser->mutex);
     parser->sink_connected = false;
-    pthread_mutex_unlock(&parser->mutex);
     pthread_cond_signal(&parser->read_cond);
     pthread_cond_broadcast(&parser->stream_event_cond);
+    while (parser->active_writers)
+        pthread_cond_wait(&parser->read_cond, &parser->mutex);
+    pthread_mutex_unlock(&parser->mutex);
 
     for (i = 0; i < parser->stream_count; ++i)
         free_stream(parser->streams[i]);
