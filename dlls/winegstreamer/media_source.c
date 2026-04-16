@@ -1723,6 +1723,8 @@ static HRESULT WINAPI media_source_Pause(IMFMediaSource *iface)
 static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
 {
     struct media_source *source = impl_from_IMFMediaSource(iface);
+    size_t queue_count = 0, i;
+    DWORD *queues = NULL;
 
     TRACE("%p.\n", iface);
 
@@ -1760,13 +1762,15 @@ static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
         IMFByteStream_Release(source->byte_stream);
     }
 
+    queues = calloc(source->stream_count, sizeof(DWORD));
     while (source->stream_count--)
     {
         struct media_stream *stream = source->streams[source->stream_count];
         IMFStreamDescriptor_Release(source->descriptors[source->stream_count]);
         IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEError, &GUID_NULL, MF_E_SHUTDOWN, NULL);
         IMFMediaEventQueue_Shutdown(stream->event_queue);
-        MFUnlockWorkQueue(stream->async_commands_queue);
+        queues[queue_count++] = stream->async_commands_queue;
+        stream->async_commands_queue = 0;
         IMFMediaStream_Release(&stream->IMFMediaStream_iface);
     }
     free(source->descriptors);
@@ -1774,6 +1778,9 @@ static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
 
     LeaveCriticalSection(&source->cs);
 
+    for (i = 0; i < queue_count; i++)
+        MFUnlockWorkQueue(queues[i]);
+    free(queues);
     MFUnlockWorkQueue(source->async_commands_queue);
 
     return S_OK;
