@@ -1481,8 +1481,10 @@ volatile void *alloc_shared_object( mem_size_t shm_size )
 
     SHARED_WRITE_BEGIN( &object->obj.shm, object_shm_t )
     {
+#ifndef NDEBUG
         /* mark the object data as uninitialized */
         mark_block_uninitialized( (void *)shared, shm_size );
+#endif
         CONTAINING_RECORD( shared, shared_object_t, shm )->id = ++session.last_object_id;
     }
     SHARED_WRITE_END;

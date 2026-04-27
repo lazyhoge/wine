@@ -202,6 +202,7 @@ void mark_block_noaccess( void *ptr, size_t size )
 #endif
 }
 
+#ifndef NDEBUG
 /* mark a block of memory as uninitialized for debugging purposes */
 void mark_block_uninitialized( void *ptr, size_t size )
 {
@@ -217,13 +218,16 @@ void mark_block_uninitialized( void *ptr, size_t size )
     VALGRIND_DISCARD( VALGRIND_MAKE_WRITABLE( ptr, size ));
 #endif
 }
+#endif
 
 /* malloc replacement */
 void *mem_alloc( size_t size )
 {
     void *ptr = malloc( size );
-    if (ptr) mark_block_uninitialized( ptr, size );
-    else set_error( STATUS_NO_MEMORY );
+    if (!ptr) set_error( STATUS_NO_MEMORY );
+#ifndef NDEBUG
+    else mark_block_uninitialized( ptr, size );
+#endif
     return ptr;
 }
 

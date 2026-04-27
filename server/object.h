@@ -26,7 +26,9 @@
 #include "wine/server_protocol.h"
 #include "wine/list.h"
 
+#ifndef NDEBUG
 #define DEBUG_OBJECTS
+#endif
 
 /* kernel objects */
 

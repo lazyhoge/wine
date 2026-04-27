@@ -1233,6 +1233,7 @@ struct cpu_topology_override
 /* Retrieve debug information about a process */
 @REQ(get_process_debug_info)
     obj_handle_t handle;           /* process handle */
+    int          want_debug_obj;   /* want debug port object? */
 @REPLY
     obj_handle_t debug;            /* handle to debug port */
     int          debug_children;   /* inherit debugger to child processes */

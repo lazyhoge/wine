@@ -329,7 +329,7 @@ done:
  */
 HMODULE WINAPI DECLSPEC_HOTPATCH GetModuleHandleA( LPCSTR module )
 {
-    HMODULE ret;
+    HMODULE ret = NULL;
 
     GetModuleHandleExA( GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, module, &ret );
     return ret;

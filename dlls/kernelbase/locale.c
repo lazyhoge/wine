@@ -3649,16 +3649,22 @@ static BOOL remove_unneeded_weights( const struct sortguid *sortid, struct sortk
     return TRUE;
 }
 
+static inline void free_buff( void *buf )
+{
+    if (buf)
+        RtlFreeHeap( GetProcessHeap(), 0, buf );
+}
+
 static void free_sortkey_state( struct sortkey_state *s )
 {
-    RtlFreeHeap( GetProcessHeap(), 0, s->key_primary.new_buf );
-    RtlFreeHeap( GetProcessHeap(), 0, s->key_diacritic.new_buf );
-    RtlFreeHeap( GetProcessHeap(), 0, s->key_case.new_buf );
-    RtlFreeHeap( GetProcessHeap(), 0, s->key_special.new_buf );
-    RtlFreeHeap( GetProcessHeap(), 0, s->key_extra[0].new_buf );
-    RtlFreeHeap( GetProcessHeap(), 0, s->key_extra[1].new_buf );
-    RtlFreeHeap( GetProcessHeap(), 0, s->key_extra[2].new_buf );
-    RtlFreeHeap( GetProcessHeap(), 0, s->key_extra[3].new_buf );
+    free_buff( s->key_primary.new_buf );
+    free_buff( s->key_diacritic.new_buf );
+    free_buff( s->key_case.new_buf );
+    free_buff( s->key_special.new_buf );
+    free_buff( s->key_extra[0].new_buf );
+    free_buff( s->key_extra[1].new_buf );
+    free_buff( s->key_extra[2].new_buf );
+    free_buff( s->key_extra[3].new_buf );
 }
 
 static int append_weights( const struct sortguid *sortid, DWORD flags,
@@ -3832,8 +3838,8 @@ static int compare_string( const struct sortguid *sortid, DWORD flags,
 {
     struct sortkey_state s1;
     struct sortkey_state s2;
-    BYTE primary1[32];
-    BYTE primary2[32];
+    BYTE primary1[256];
+    BYTE primary2[256];
     int i, ret, len, pos1 = 0, pos2 = 0;
     BOOL have_extra1, have_extra2;
     BYTE case_mask = 0x3f;

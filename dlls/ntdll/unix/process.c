@@ -1390,19 +1390,16 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
         if (!info) ret = STATUS_ACCESS_VIOLATION;
         else
         {
-            HANDLE debug;
-
             SERVER_START_REQ(get_process_debug_info)
             {
                 req->handle = wine_server_obj_handle( handle );
+                req->want_debug_obj = 0;
                 ret = wine_server_call( req );
-                debug = wine_server_ptr_handle( reply->debug );
             }
             SERVER_END_REQ;
             if (ret == STATUS_SUCCESS)
             {
                 *(DWORD_PTR *)info = ~0ul;
-                NtClose( debug );
             }
             else if (ret == STATUS_PORT_NOT_SET)
             {
@@ -1437,18 +1434,15 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
             if (!info) ret = STATUS_ACCESS_VIOLATION;
             else
             {
-                HANDLE debug;
-
                 SERVER_START_REQ(get_process_debug_info)
                 {
                     req->handle = wine_server_obj_handle( handle );
+                    req->want_debug_obj = 0;
                     ret = wine_server_call( req );
-                    debug = wine_server_ptr_handle( reply->debug );
                     *(DWORD *)info = reply->debug_children;
                 }
                 SERVER_END_REQ;
-                if (ret == STATUS_SUCCESS) NtClose( debug );
-                else if (ret == STATUS_PORT_NOT_SET) ret = STATUS_SUCCESS;
+                if (ret == STATUS_PORT_NOT_SET) ret = STATUS_SUCCESS;
             }
         }
         else ret = STATUS_INFO_LENGTH_MISMATCH;
@@ -1470,6 +1464,7 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
         SERVER_START_REQ(get_process_debug_info)
         {
             req->handle = wine_server_obj_handle( handle );
+            req->want_debug_obj = 1;
             ret = wine_server_call( req );
             *(HANDLE *)info = wine_server_ptr_handle( reply->debug );
         }
