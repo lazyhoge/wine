@@ -27,6 +27,7 @@
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <dlfcn.h>
 
 #define GLIB_VERSION_MIN_REQUIRED GLIB_VERSION_2_30
 #include <gst/gst.h>
@@ -257,6 +258,101 @@ static ULONG popcount(ULONG val)
 #endif
 }
 
+static void (*soup_message_set_force_http1)(GObject *msg, gboolean value);
+static void (*orig_soupmessage_constructed)(GObject *object);
+
+static void soupmessage_constructed(GObject *object)
+{
+    if (orig_soupmessage_constructed)
+        orig_soupmessage_constructed(object);
+
+    soup_message_set_force_http1(object, TRUE);
+}
+
+#define LIBSOUP_SO "libsoup-3.0.so"
+
+static bool hook_libsoup(void)
+{
+    GType (*soup_message_get_type)(void);
+    GObjectClass *soupmessage_class;
+    GType soupmessage_type;
+    void *libsoup;
+
+    libsoup = dlopen(LIBSOUP_SO, RTLD_GLOBAL | RTLD_NOW);
+    if (!libsoup)
+        return false;
+
+    soup_message_get_type = dlsym(libsoup, "soup_message_get_type");
+    soup_message_set_force_http1 = dlsym(libsoup, "soup_message_set_force_http1");
+    if (!soup_message_get_type || !soup_message_set_force_http1) return false;
+
+    soupmessage_type = soup_message_get_type();
+    assert(soupmessage_type);
+    soupmessage_class = g_type_class_ref(soupmessage_type);
+    assert(soupmessage_class);
+
+    orig_soupmessage_constructed = soupmessage_class->constructed;
+    soupmessage_class->constructed = soupmessage_constructed;
+    GST_INFO("Overrode SoupMessage->constructed.");
+    return true;
+}
+
+#define USER_AGENT "NSPlayer/12.00.19041.4894 WMFSDK/12.00.19041.4894"
+static void (*orig_souphttpsrc_constructed)(GObject *object);
+
+static void souphttpsrc_constructed(GObject *object)
+{
+    GValue user_agent = G_VALUE_INIT;
+
+    if (orig_souphttpsrc_constructed)
+        orig_souphttpsrc_constructed(object);
+
+    g_value_init(&user_agent, G_TYPE_STRING);
+    g_value_set_static_string(&user_agent, USER_AGENT);
+    g_object_set_property(object, "user-agent", &user_agent);
+    g_value_unset(&user_agent);
+}
+
+static bool hook_souphttpsrc(void)
+{
+    GstElementFactory *souphttpsrc_factory, *loaded_factory;
+    GObjectClass *souphttpsrc_class;
+    GType souphttpsrc_type;
+
+    souphttpsrc_factory = gst_element_factory_find("souphttpsrc");
+    if (!souphttpsrc_factory)
+        return false;
+    loaded_factory = GST_ELEMENT_FACTORY(gst_plugin_feature_load(GST_PLUGIN_FEATURE(souphttpsrc_factory)));
+    if (!loaded_factory)
+        return false;
+    gst_object_unref(souphttpsrc_factory);
+
+    souphttpsrc_type = gst_element_factory_get_element_type(loaded_factory);
+    assert(souphttpsrc_type);
+    souphttpsrc_class = g_type_class_ref(souphttpsrc_type);
+    assert(souphttpsrc_class);
+
+    orig_souphttpsrc_constructed = souphttpsrc_class->constructed;
+    souphttpsrc_class->constructed = souphttpsrc_constructed;
+    GST_INFO("Overrode GstSoupHTTPSrcClass->constructed.");
+    return true;
+}
+
+static void hook_soup(void)
+{
+    if (!hook_libsoup())
+    {
+        GST_ERROR("Failed to hook libsoup!");
+        return;
+    }
+
+    if (!hook_souphttpsrc())
+    {
+        GST_ERROR("Failed to hook souphttpsrc!");
+        return;
+    }
+}
+
 NTSTATUS wg_init_gstreamer(void *arg)
 {
     struct wg_init_gstreamer_params *params = arg;
@@ -331,6 +427,8 @@ NTSTATUS wg_init_gstreamer(void *arg)
         GST_ERROR("Failed to init media converter.");
         return STATUS_UNSUCCESSFUL;
     }
+
+    hook_soup();
 
     return STATUS_SUCCESS;
 }
