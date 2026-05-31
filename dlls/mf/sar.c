@@ -406,25 +406,11 @@ static HRESULT WINAPI audio_renderer_sink_GetStreamSinkById(IMFMediaSink *iface,
     return hr;
 }
 
-static void audio_renderer_set_presentation_clock(struct audio_renderer *renderer, IMFPresentationClock *clock)
-{
-    if (renderer->clock)
-    {
-        IMFPresentationClock_RemoveClockStateSink(renderer->clock, &renderer->IMFClockStateSink_iface);
-        IMFPresentationClock_Release(renderer->clock);
-    }
-    renderer->clock = clock;
-    if (renderer->clock)
-    {
-        IMFPresentationClock_AddRef(renderer->clock);
-        IMFPresentationClock_AddClockStateSink(renderer->clock, &renderer->IMFClockStateSink_iface);
-    }
-}
-
 static HRESULT WINAPI audio_renderer_sink_SetPresentationClock(IMFMediaSink *iface, IMFPresentationClock *clock)
 {
     struct audio_renderer *renderer = impl_from_IMFMediaSink(iface);
     IMFPresentationTimeSource *time_source = NULL;
+    IMFPresentationClock *old_clock = NULL;
     HRESULT hr = S_OK;
 
     TRACE("%p, %p.\n", iface, clock);
@@ -437,10 +423,20 @@ static HRESULT WINAPI audio_renderer_sink_SetPresentationClock(IMFMediaSink *ifa
     {
         if (time_source)
             IMFPresentationTimeSource_Release(time_source);
-        audio_renderer_set_presentation_clock(renderer, clock);
+        old_clock = renderer->clock;
+        renderer->clock = clock;
+        IMFPresentationClock_AddRef(renderer->clock);
     }
 
     LeaveCriticalSection(&renderer->cs);
+
+    if (old_clock)
+    {
+        IMFPresentationClock_RemoveClockStateSink(old_clock, &renderer->IMFClockStateSink_iface);
+        IMFPresentationClock_Release(old_clock);
+    }
+    if (clock)
+        IMFPresentationClock_AddClockStateSink(clock, &renderer->IMFClockStateSink_iface);
 
     return hr;
 }
@@ -475,6 +471,7 @@ static HRESULT WINAPI audio_renderer_sink_GetPresentationClock(IMFMediaSink *ifa
 static HRESULT WINAPI audio_renderer_sink_Shutdown(IMFMediaSink *iface)
 {
     struct audio_renderer *renderer = impl_from_IMFMediaSink(iface);
+    IMFPresentationClock *old_clock = NULL;
     HRESULT hr = S_OK;
 
     TRACE("%p.\n", iface);
@@ -488,11 +485,18 @@ static HRESULT WINAPI audio_renderer_sink_Shutdown(IMFMediaSink *iface)
         renderer->flags |= SAR_SHUT_DOWN;
         IMFMediaEventQueue_Shutdown(renderer->event_queue);
         IMFMediaEventQueue_Shutdown(renderer->stream_event_queue);
-        audio_renderer_set_presentation_clock(renderer, NULL);
+        old_clock = renderer->clock;
+        renderer->clock = NULL;
         audio_renderer_release_audio_client(renderer);
     }
 
     LeaveCriticalSection(&renderer->cs);
+
+    if (old_clock)
+    {
+        IMFPresentationClock_RemoveClockStateSink(old_clock, &renderer->IMFClockStateSink_iface);
+        IMFPresentationClock_Release(old_clock);
+    }
 
     return hr;
 }

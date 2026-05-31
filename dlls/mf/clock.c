@@ -288,14 +288,13 @@ static ULONG WINAPI present_clock_Release(IMFPresentationClock *iface)
 static HRESULT WINAPI present_clock_GetClockCharacteristics(IMFPresentationClock *iface, DWORD *flags)
 {
     struct presentation_clock *clock = impl_from_IMFPresentationClock(iface);
+    IMFPresentationTimeSource *time_source;
     HRESULT hr = MF_E_CLOCK_NO_TIME_SOURCE;
 
     TRACE("%p, %p.\n", iface, flags);
 
-    EnterCriticalSection(&clock->cs);
-    if (clock->time_source)
-        hr = IMFPresentationTimeSource_GetClockCharacteristics(clock->time_source, flags);
-    LeaveCriticalSection(&clock->cs);
+    if ((time_source = clock->time_source))
+        hr = IMFPresentationTimeSource_GetClockCharacteristics(time_source, flags);
 
     return hr;
 }
@@ -304,14 +303,13 @@ static HRESULT WINAPI present_clock_GetCorrelatedTime(IMFPresentationClock *ifac
         LONGLONG *clock_time, MFTIME *system_time)
 {
     struct presentation_clock *clock = impl_from_IMFPresentationClock(iface);
+    IMFPresentationTimeSource *time_source;
     HRESULT hr = MF_E_CLOCK_NO_TIME_SOURCE;
 
     TRACE("%p, %#lx, %p, %p.\n", iface, reserved, clock_time, system_time);
 
-    EnterCriticalSection(&clock->cs);
-    if (clock->time_source)
-        hr = IMFPresentationTimeSource_GetCorrelatedTime(clock->time_source, reserved, clock_time, system_time);
-    LeaveCriticalSection(&clock->cs);
+    if ((time_source = clock->time_source))
+        hr = IMFPresentationTimeSource_GetCorrelatedTime(time_source, reserved, clock_time, system_time);
 
     return hr;
 }
@@ -341,14 +339,13 @@ static HRESULT WINAPI present_clock_GetState(IMFPresentationClock *iface, DWORD 
 static HRESULT WINAPI present_clock_GetProperties(IMFPresentationClock *iface, MFCLOCK_PROPERTIES *props)
 {
     struct presentation_clock *clock = impl_from_IMFPresentationClock(iface);
+    IMFPresentationTimeSource *time_source;
     HRESULT hr = MF_E_CLOCK_NO_TIME_SOURCE;
 
     TRACE("%p, %p.\n", iface, props);
 
-    EnterCriticalSection(&clock->cs);
-    if (clock->time_source)
+    if ((time_source = clock->time_source))
         hr = IMFPresentationTimeSource_GetProperties(clock->time_source, props);
-    LeaveCriticalSection(&clock->cs);
 
     return hr;
 }
@@ -357,29 +354,32 @@ static HRESULT WINAPI present_clock_SetTimeSource(IMFPresentationClock *iface,
         IMFPresentationTimeSource *time_source)
 {
     struct presentation_clock *clock = impl_from_IMFPresentationClock(iface);
+    IMFClockStateSink *sink = NULL, *old_time_source_sink = NULL;
+    IMFPresentationTimeSource *old_time_source = NULL;
     MFCLOCK_PROPERTIES props;
     IMFClock *source_clock;
-    HRESULT hr;
+    HRESULT hr, source_hr;
 
     TRACE("%p, %p.\n", iface, time_source);
 
+    hr = IMFPresentationTimeSource_QueryInterface(time_source, &IID_IMFClockStateSink, (void **)&sink);
+    source_hr = IMFPresentationTimeSource_GetUnderlyingClock(time_source, &source_clock);
+
     EnterCriticalSection(&clock->cs);
 
-    if (clock->time_source)
-        IMFPresentationTimeSource_Release(clock->time_source);
-    if (clock->time_source_sink)
-        IMFClockStateSink_Release(clock->time_source_sink);
+    old_time_source = clock->time_source;
+    old_time_source_sink = clock->time_source_sink;
     clock->time_source = NULL;
     clock->time_source_sink = NULL;
 
-    hr = IMFPresentationTimeSource_QueryInterface(time_source, &IID_IMFClockStateSink, (void **)&clock->time_source_sink);
     if (SUCCEEDED(hr))
     {
         clock->time_source = time_source;
+        clock->time_source_sink = sink;
         IMFPresentationTimeSource_AddRef(clock->time_source);
     }
 
-    if (SUCCEEDED(IMFPresentationTimeSource_GetUnderlyingClock(time_source, &source_clock)))
+    if (SUCCEEDED(source_hr))
     {
         if (SUCCEEDED(IMFClock_GetProperties(source_clock, &props)))
             clock->frequency = props.qwClockFrequency;
@@ -390,6 +390,11 @@ static HRESULT WINAPI present_clock_SetTimeSource(IMFPresentationClock *iface,
         clock->frequency = MFCLOCK_FREQUENCY_HNS;
 
     LeaveCriticalSection(&clock->cs);
+
+    if (old_time_source)
+        IMFPresentationTimeSource_Release(old_time_source);
+    if (old_time_source_sink)
+        IMFClockStateSink_Release(old_time_source_sink);
 
     return hr;
 }
@@ -421,6 +426,7 @@ static HRESULT WINAPI present_clock_GetTimeSource(IMFPresentationClock *iface,
 static HRESULT WINAPI present_clock_GetTime(IMFPresentationClock *iface, MFTIME *time)
 {
     struct presentation_clock *clock = impl_from_IMFPresentationClock(iface);
+    IMFPresentationTimeSource *time_source;
     HRESULT hr = MF_E_CLOCK_NO_TIME_SOURCE;
     MFTIME systime;
 
@@ -429,10 +435,8 @@ static HRESULT WINAPI present_clock_GetTime(IMFPresentationClock *iface, MFTIME 
     if (!time)
         return E_POINTER;
 
-    EnterCriticalSection(&clock->cs);
-    if (clock->time_source)
-        hr = IMFPresentationTimeSource_GetCorrelatedTime(clock->time_source, 0, time, &systime);
-    LeaveCriticalSection(&clock->cs);
+    if ((time_source = clock->time_source))
+        hr = IMFPresentationTimeSource_GetCorrelatedTime(time_source, 0, time, &systime);
 
     return hr;
 }
@@ -452,7 +456,7 @@ static HRESULT WINAPI present_clock_AddClockStateSink(IMFPresentationClock *ifac
         return E_OUTOFMEMORY;
 
     sink->state_sink = state_sink;
-    IMFClockStateSink_AddRef(sink->state_sink);
+    IMFClockStateSink_AddRef(state_sink);
 
     EnterCriticalSection(&clock->cs);
     LIST_FOR_EACH_ENTRY(cur, &clock->sinks, struct clock_sink, entry)
@@ -485,7 +489,7 @@ static HRESULT WINAPI present_clock_AddClockStateSink(IMFPresentationClock *ifac
 
     if (FAILED(hr))
     {
-        IMFClockStateSink_Release(sink->state_sink);
+        IMFClockStateSink_Release(state_sink);
         free(sink);
     }
 
@@ -497,6 +501,7 @@ static HRESULT WINAPI present_clock_RemoveClockStateSink(IMFPresentationClock *i
 {
     struct presentation_clock *clock = impl_from_IMFPresentationClock(iface);
     struct clock_sink *sink;
+    BOOL found = FALSE;
 
     TRACE("%p, %p.\n", iface, state_sink);
 
@@ -508,7 +513,7 @@ static HRESULT WINAPI present_clock_RemoveClockStateSink(IMFPresentationClock *i
     {
         if (sink->state_sink == state_sink)
         {
-            IMFClockStateSink_Release(sink->state_sink);
+            found = TRUE;
             list_remove(&sink->entry);
             free(sink);
             break;
@@ -516,6 +521,8 @@ static HRESULT WINAPI present_clock_RemoveClockStateSink(IMFPresentationClock *i
     }
     LeaveCriticalSection(&clock->cs);
 
+    if (found)
+        IMFClockStateSink_Release(state_sink);
     return S_OK;
 }
 
