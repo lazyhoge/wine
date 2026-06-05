@@ -797,6 +797,7 @@ static HRESULT topology_branch_connect_optional_chain(IMFTopology *topology, str
         IMFTopologyNode *down_node, DWORD down_stream)
 {
     struct topology_branch *current, *up_branch, *down_branch;
+    IMFMediaType *prev_up_type = NULL, *prev_down_type = NULL;
     IMFTopologyNode *node;
     DWORD stream;
     HRESULT hr;
@@ -809,7 +810,6 @@ static HRESULT topology_branch_connect_optional_chain(IMFTopology *topology, str
     while (SUCCEEDED(hr) && node != branch->down.node)
     {
         IMFTopologyNode *tmp = node;
-        IMFMediaType *orig;
         UINT32 method;
 
         if (FAILED(IMFTopologyNode_GetUINT32(node, &MF_TOPONODE_CONNECT_METHOD, &method)))
@@ -820,26 +820,35 @@ static HRESULT topology_branch_connect_optional_chain(IMFTopology *topology, str
          * downstream of them. Support for upstream insertion is untested in native, but seems unlikely to work. */
         if (FAILED(hr = topology_branch_create_for_input(down_node, down_stream, &current)))
             break;
-        if (FAILED(hr = IMFMediaTypeHandler_GetCurrentMediaType(current->up.handler, &orig)))
-        {
-            topology_branch_destroy(current);
-            break;
-        }
+
+        IMFMediaTypeHandler_GetCurrentMediaType(current->up.handler, &prev_up_type);
+        if (topology_node_get_type(current->down.node) == MF_TOPOLOGY_TRANSFORM_NODE)
+            IMFMediaTypeHandler_GetCurrentMediaType(current->down.handler, &prev_down_type);
 
         if (SUCCEEDED(hr = topology_branch_create_optional(topology, current, node, stream, &up_branch, &down_branch)))
         {
             if (FAILED(hr = topology_branch_connect(topology, CONNECT_DIRECT, up_branch, NULL, !!method))
                     || FAILED(hr = topology_branch_connect(topology, CONNECT_DIRECT, down_branch, NULL, FALSE)))
             {
-                if (FAILED(hr = topology_branch_connect_with_type(topology, current, orig)))
+                IMFMediaTypeHandler_SetCurrentMediaType(current->up.handler, prev_up_type);
+                if (topology_node_get_type(current->down.node) == MF_TOPOLOGY_TRANSFORM_NODE)
+                    IMFMediaTypeHandler_SetCurrentMediaType(current->down.handler, prev_down_type);
+
+                if (FAILED(hr = topology_branch_connect(topology, CONNECT_DIRECT, current, NULL, FALSE)))
                     WARN("Failed to restore previous branch %s\n", debugstr_topology_branch(current));
                 IMFTopology_RemoveNode(topology, down_branch->up.node);
             }
             topology_branch_destroy(down_branch);
             topology_branch_destroy(up_branch);
         }
-        IMFMediaType_Release(orig);
         topology_branch_destroy(current);
+
+        if (prev_down_type)
+            IMFMediaType_Release(prev_down_type);
+        if (prev_up_type)
+            IMFMediaType_Release(prev_up_type);
+        prev_down_type = NULL;
+        prev_up_type = NULL;
 
         hr = IMFTopologyNode_GetOutput(tmp, 0, &node, &stream);
         IMFTopologyNode_Release(tmp);
