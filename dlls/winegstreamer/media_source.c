@@ -223,6 +223,8 @@ struct media_source
 
     HANDLE event_thread;
     bool event_thread_shutdown;
+
+    bool disconnect_thread_running, disconnect_thread_free;
 };
 
 static inline struct media_stream *impl_from_IMFMediaStream(IMFMediaStream *iface)
@@ -1020,6 +1022,9 @@ static DWORD CALLBACK read_thread(void *arg)
         if (!wg_parser_get_next_read_offset(source->wg_parser, &offset, &size))
             continue;
 
+        if (source->read_thread_shutdown)
+            continue;
+
         if (offset >= file_size)
             size = 0;
         else if (offset + size >= file_size)
@@ -1073,7 +1078,7 @@ static DWORD CALLBACK event_thread(void *arg)
         if (!wg_parser_get_next_event(source->wg_parser, &stream, &event_type, &ext_type, &evt_hr, &data))
             continue;
 
-        if (!event_type)
+        if (!event_type || source->event_thread_shutdown)
             continue;
 
         if (stream != -1)
@@ -1534,10 +1539,20 @@ static ULONG WINAPI media_source_Release(IMFMediaSource *iface)
     {
         IMFMediaSource_Shutdown(iface);
         IMFMediaEventQueue_Release(source->event_queue);
-        wg_parser_destroy(source->wg_parser);
-        source->cs.DebugInfo->Spare[0] = 0;
-        DeleteCriticalSection(&source->cs);
-        free(source);
+        EnterCriticalSection(&source->cs);
+        if (source->disconnect_thread_running)
+        {
+            source->disconnect_thread_free = true;
+            LeaveCriticalSection(&source->cs);
+        }
+        else
+        {
+            LeaveCriticalSection(&source->cs);
+            wg_parser_destroy(source->wg_parser);
+            source->cs.DebugInfo->Spare[0] = 0;
+            DeleteCriticalSection(&source->cs);
+            free(source);
+        }
     }
 
     return ref;
@@ -1720,10 +1735,50 @@ static HRESULT WINAPI media_source_Pause(IMFMediaSource *iface)
     return hr;
 }
 
+static DWORD CALLBACK media_source_disconnect(void *param)
+{
+    struct media_source *source = param;
+
+    wg_parser_disconnect(source->wg_parser);
+
+    EnterCriticalSection(&source->cs);
+
+    if (source->event_thread)
+    {
+        source->event_thread_shutdown = true;
+        WaitForSingleObject(source->event_thread, INFINITE);
+        CloseHandle(source->event_thread);
+    }
+
+    if (source->read_thread)
+    {
+        source->read_thread_shutdown = true;
+        WaitForSingleObject(source->read_thread, INFINITE);
+        CloseHandle(source->read_thread);
+    }
+
+    if (!source->disconnect_thread_free)
+    {
+        source->disconnect_thread_running = false;
+        LeaveCriticalSection(&source->cs);
+    }
+    else
+    {
+        LeaveCriticalSection(&source->cs);
+        wg_parser_destroy(source->wg_parser);
+        source->cs.DebugInfo->Spare[0] = 0;
+        DeleteCriticalSection(&source->cs);
+        free(source);
+    }
+
+    return 0;
+}
+
 static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
 {
     struct media_source *source = impl_from_IMFMediaSource(iface);
     size_t queue_count = 0, i;
+    HANDLE disconnect_thread;
     DWORD *queues = NULL;
 
     TRACE("%p.\n", iface);
@@ -1738,20 +1793,16 @@ static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
 
     source->state = SOURCE_SHUTDOWN;
 
-    wg_parser_disconnect(source->wg_parser);
-
-    if (source->event_thread)
+    disconnect_thread = CreateThread(NULL, 0, media_source_disconnect, source, 0, NULL);
+    if (!disconnect_thread)
+        media_source_disconnect(source);
+    else
     {
-        source->event_thread_shutdown = true;
-        WaitForSingleObject(source->event_thread, INFINITE);
-        CloseHandle(source->event_thread);
-    }
-
-    if (source->read_thread)
-    {
-        source->read_thread_shutdown = true;
-        WaitForSingleObject(source->read_thread, INFINITE);
-        CloseHandle(source->read_thread);
+        source->disconnect_thread_running = true;
+        LeaveCriticalSection(&source->cs);
+        WaitForSingleObject(disconnect_thread, 3000);
+        CloseHandle(disconnect_thread);
+        EnterCriticalSection(&source->cs);
     }
 
     IMFMediaEventQueue_QueueEventParamVar(source->event_queue, MEError, &GUID_NULL, MF_E_SHUTDOWN, NULL);
