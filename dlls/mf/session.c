@@ -106,6 +106,8 @@ enum command_state
     COMMAND_STATE_SUBMITTED,
     /* Command is executing */
     COMMAND_STATE_RUNNING,
+    /* SetRate command is completing asynchronously */
+    COMMAND_STATE_CHANGING_RATE,
     /* STOPPED | PAUSED | STARTED -> STARTED transition */
     COMMAND_STATE_RESTARTING_SOURCES, /* -> COMMAND_STATE_STARTING_SOURCES */
     COMMAND_STATE_STARTING_SOURCES,   /* -> COMMAND_STATE_PREROLLING_SINKS | COMMAND_STATE_STARTING_SINKS */
@@ -1740,6 +1742,7 @@ static void session_set_rate(struct media_session *session, BOOL thin, float rat
                     session->presentation.flags |= SESSION_FLAG_PENDING_RATE_CHANGE;
                     session->presentation.rate = rate;
                     session->presentation.thin = thin;
+                    session->command_state = COMMAND_STATE_CHANGING_RATE;
                     return;
                 }
             }
@@ -1760,6 +1763,8 @@ static void session_complete_rate_change(struct media_session *session)
 
     if (!(session->presentation.flags & SESSION_FLAG_PENDING_RATE_CHANGE))
         return;
+
+    assert(session->command_state == COMMAND_STATE_CHANGING_RATE);
 
     session->presentation.flags &= ~SESSION_FLAG_PENDING_RATE_CHANGE;
     session_set_presentation_clock(session);
@@ -3223,6 +3228,7 @@ static void session_handle_source_shutdown(struct media_session *session)
             break;
         case COMMAND_STATE_SUBMITTED:
         case COMMAND_STATE_RUNNING:
+        case COMMAND_STATE_CHANGING_RATE:
             break;
     }
 
@@ -3593,6 +3599,7 @@ static void session_set_source_object_state(struct media_session *session, IUnkn
         case COMMAND_STATE_SUBMITTED:
         case COMMAND_STATE_RUNNING:
         case COMMAND_STATE_COMPLETE:
+        case COMMAND_STATE_CHANGING_RATE:
         case COMMAND_STATE_PREROLLING_SINKS:
         case COMMAND_STATE_STARTING_SINKS:
         case COMMAND_STATE_PAUSING_SINKS:
@@ -3658,6 +3665,7 @@ static void session_set_sink_stream_state(struct media_session *session, IMFStre
         case COMMAND_STATE_SUBMITTED:
         case COMMAND_STATE_RUNNING:
         case COMMAND_STATE_COMPLETE:
+        case COMMAND_STATE_CHANGING_RATE:
         case COMMAND_STATE_RESTARTING_SOURCES:
         case COMMAND_STATE_STARTING_SOURCES:
         case COMMAND_STATE_PAUSING_SOURCES:
