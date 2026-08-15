@@ -2025,6 +2025,9 @@ struct thread_settings settings[] = {
     { "dxvk-queue", THREAD_PRIORITY_TIME_CRITICAL },
     { "dxvk-submit", THREAD_PRIORITY_TIME_CRITICAL },
     { "dxvk-frame", THREAD_PRIORITY_HIGHEST },
+    { "dxvk-shader-h", THREAD_PRIORITY_HIGHEST },
+    { "dxvk-shader-n", THREAD_PRIORITY_NORMAL },
+    { "dxvk-shader-l", THREAD_PRIORITY_IDLE },
 
     { "UnityGfxDeviceWorker", THREAD_PRIORITY_HIGHEST },
     { "Timer-Scheduler", THREAD_PRIORITY_HIGHEST },
