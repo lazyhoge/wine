@@ -87,6 +87,7 @@ struct video_frame_sink
     IMFStreamSink IMFStreamSink_iface;
     IMFMediaTypeHandler IMFMediaTypeHandler_iface;
     IMFGetService IMFGetService_iface;
+    IMFAsyncCallback scheduled_request_sample_callback_iface;
     LONG refcount;
     IUnknown *device_manager;
     IMFMediaType *media_type;
@@ -95,12 +96,14 @@ struct video_frame_sink
     IMFMediaEventQueue *event_queue;
     IMFMediaEventQueue *stream_event_queue;
     IMFPresentationClock *clock;
+    IMFTimer *timer;
     IMFAsyncCallback *callback;
     float rate;
     enum sink_state state;
     unsigned int flags;
     struct sample_queue queue;
     bool sample_request_pending;
+    IUnknown *scheduled_request_sample_cancel_key;
     bool eos;
     CRITICAL_SECTION cs;
 };
@@ -128,6 +131,18 @@ static BOOL video_frame_sink_sample_queue_pop(struct video_frame_sink *sink, IMF
         queue->front = (queue->front + 1) % ARRAY_SIZE(queue->samples);
         queue->used--;
     }
+    else
+        *sample = NULL;
+
+    return *sample != NULL;
+}
+
+static BOOL video_frame_sink_sample_queue_peek_back(struct video_frame_sink *sink, IMFSample **sample)
+{
+    struct sample_queue *queue = &sink->queue;
+
+    if (queue->used)
+        *sample = queue->samples[(queue->front + queue->used - 1) % ARRAY_SIZE(queue->samples)];
     else
         *sample = NULL;
 
@@ -220,6 +235,11 @@ static struct video_frame_sink *impl_from_IMFMediaTypeHandler(IMFMediaTypeHandle
 static struct video_frame_sink *impl_from_IMFGetService(IMFGetService *iface)
 {
     return CONTAINING_RECORD(iface, struct video_frame_sink, IMFGetService_iface);
+}
+
+static struct video_frame_sink *impl_from_scheduled_request_sample_callback(IMFAsyncCallback *iface)
+{
+    return CONTAINING_RECORD(iface, struct video_frame_sink, scheduled_request_sample_callback_iface);
 }
 
 static HRESULT WINAPI video_frame_sink_stream_QueryInterface(IMFStreamSink *iface, REFIID riid, void **obj)
@@ -386,6 +406,26 @@ static void video_frame_sink_notify(struct video_frame_sink *sink, unsigned int 
     IMFAsyncResult_Release(result);
 }
 
+static void video_frame_sink_stream_schedule_request_sample(struct video_frame_sink *sink, LONGLONG sampletime)
+{
+    MFTIME clocktime;
+
+    if (!sink->clock || !sink->timer || sink->scheduled_request_sample_cancel_key)
+        return;
+
+    if (FAILED(IMFPresentationClock_GetTime(sink->clock, &clocktime)))
+        return;
+
+    if (sampletime < clocktime)
+    {
+        video_frame_sink_stream_request_sample(sink);
+        return;
+    }
+
+    IMFTimer_SetTimer(sink->timer, 0, sampletime, &sink->scheduled_request_sample_callback_iface,
+                      NULL, &sink->scheduled_request_sample_cancel_key);
+}
+
 static HRESULT WINAPI video_frame_sink_stream_ProcessSample(IMFStreamSink *iface, IMFSample *sample)
 {
     struct video_frame_sink *sink = impl_from_IMFStreamSink(iface);
@@ -432,6 +472,8 @@ static HRESULT WINAPI video_frame_sink_stream_ProcessSample(IMFStreamSink *iface
 
             if (sink->queue.used != ARRAY_SIZE(sink->queue.samples))
                 video_frame_sink_stream_request_sample(sink);
+            else
+                video_frame_sink_stream_schedule_request_sample(sink, sampletime);
         }
     }
 
@@ -696,6 +738,77 @@ static const IMFGetServiceVtbl video_frame_sink_stream_get_service_vtbl =
     video_frame_sink_stream_get_service_GetService,
 };
 
+static HRESULT WINAPI video_frame_sink_scheduled_request_sample_callback_QueryInterface(IMFAsyncCallback *iface, REFIID riid,
+        void **obj)
+{
+    if (IsEqualIID(riid, &IID_IMFAsyncCallback) || IsEqualIID(riid, &IID_IUnknown))
+    {
+        *obj = iface;
+        IMFAsyncCallback_AddRef(iface);
+        return S_OK;
+    }
+
+    WARN("Unsupported %s.\n", debugstr_guid(riid));
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI video_frame_sink_scheduled_request_sample_callback_AddRef(IMFAsyncCallback *iface)
+{
+    struct video_frame_sink *sink = impl_from_scheduled_request_sample_callback(iface);
+    return IMFStreamSink_AddRef(&sink->IMFStreamSink_iface);
+}
+
+static ULONG WINAPI video_frame_sink_scheduled_request_sample_callback_Release(IMFAsyncCallback *iface)
+{
+    struct video_frame_sink *sink = impl_from_scheduled_request_sample_callback(iface);
+    return IMFStreamSink_Release(&sink->IMFStreamSink_iface);
+}
+
+static HRESULT WINAPI video_frame_sink_scheduled_request_sample_callback_GetParameters(IMFAsyncCallback *iface, DWORD *flags,
+        DWORD *queue)
+{
+    *flags = 0;
+    *queue = MFASYNC_CALLBACK_QUEUE_MULTITHREADED;
+    return S_OK;
+}
+
+static HRESULT WINAPI video_frame_sink_scheduled_request_sample_callback_Invoke(IMFAsyncCallback *iface, IMFAsyncResult *result)
+{
+    struct video_frame_sink *sink = impl_from_scheduled_request_sample_callback(iface);
+    LONGLONG sampletime;
+    IMFSample *sample;
+    MFTIME clocktime;
+
+    EnterCriticalSection(&sink->cs);
+
+    if (sink->scheduled_request_sample_cancel_key)
+    {
+        IUnknown_Release(sink->scheduled_request_sample_cancel_key);
+        sink->scheduled_request_sample_cancel_key = NULL;
+    }
+
+    if (!sink->is_shut_down && sink->state == SINK_STATE_RUNNING && sink->clock &&
+        video_frame_sink_sample_queue_peek_back(sink, &sample) &&
+        SUCCEEDED(IMFSample_GetSampleTime(sample, &sampletime)) &&
+        SUCCEEDED(IMFPresentationClock_GetTime(sink->clock, &clocktime)) &&
+        sampletime < clocktime)
+        video_frame_sink_stream_request_sample(sink);
+
+    LeaveCriticalSection(&sink->cs);
+
+    return S_OK;
+}
+
+static const IMFAsyncCallbackVtbl video_frame_sink_scheduled_request_sample_callback_vtbl =
+{
+    video_frame_sink_scheduled_request_sample_callback_QueryInterface,
+    video_frame_sink_scheduled_request_sample_callback_AddRef,
+    video_frame_sink_scheduled_request_sample_callback_Release,
+    video_frame_sink_scheduled_request_sample_callback_GetParameters,
+    video_frame_sink_scheduled_request_sample_callback_Invoke,
+};
+
 static HRESULT WINAPI video_frame_sink_QueryInterface(IMFMediaSink *iface, REFIID riid, void **obj)
 {
     struct video_frame_sink *sink = impl_from_IMFMediaSink(iface);
@@ -753,6 +866,13 @@ static ULONG WINAPI video_frame_sink_Release(IMFMediaSink *iface)
             IUnknown_Release(sink->device_manager);
         if (sink->event_queue)
             IMFMediaEventQueue_Release(sink->event_queue);
+        if (sink->scheduled_request_sample_cancel_key)
+        {
+            IMFTimer_CancelTimer(sink->timer, sink->scheduled_request_sample_cancel_key);
+            IUnknown_Release(sink->scheduled_request_sample_cancel_key);
+        }
+        if (sink->timer)
+            IMFTimer_Release(sink->timer);
         if (sink->clock)
             IMFPresentationClock_Release(sink->clock);
         if (sink->callback)
@@ -867,19 +987,49 @@ static HRESULT WINAPI video_frame_sink_GetStreamSinkById(IMFMediaSink *iface, DW
     return hr;
 }
 
+static void video_frame_sink_schedule_request_sample(struct video_frame_sink *sink)
+{
+    LONGLONG sampletime;
+    IMFSample *sample;
+
+    if (sink->sample_request_pending || sink->eos)
+        return;
+
+    if (sink->queue.used == ARRAY_SIZE(sink->queue.samples) &&
+        video_frame_sink_sample_queue_peek_back(sink, &sample) &&
+        SUCCEEDED(IMFSample_GetSampleTime(sample, &sampletime)))
+        video_frame_sink_stream_schedule_request_sample(sink, sampletime);
+    else
+        video_frame_sink_stream_request_sample(sink);
+}
+
 static void video_frame_sink_set_presentation_clock(struct video_frame_sink *sink, IMFPresentationClock *clock)
 {
+    if (sink->scheduled_request_sample_cancel_key)
+    {
+        IMFTimer_CancelTimer(sink->timer, sink->scheduled_request_sample_cancel_key);
+        IUnknown_Release(sink->scheduled_request_sample_cancel_key);
+        sink->scheduled_request_sample_cancel_key = NULL;
+    }
+
+    if (sink->timer)
+        IMFTimer_Release(sink->timer);
     if (sink->clock)
     {
         IMFPresentationClock_RemoveClockStateSink(sink->clock, &sink->IMFClockStateSink_iface);
         IMFPresentationClock_Release(sink->clock);
     }
     sink->clock = clock;
+    sink->timer = NULL;
     if (sink->clock)
     {
         IMFPresentationClock_AddRef(sink->clock);
         IMFPresentationClock_AddClockStateSink(sink->clock, &sink->IMFClockStateSink_iface);
+        IMFPresentationClock_QueryInterface(sink->clock, &IID_IMFTimer, (void **)&sink->timer);
     }
+
+    if (sink->state == SINK_STATE_RUNNING)
+        video_frame_sink_schedule_request_sample(sink);
 }
 
 static HRESULT WINAPI video_frame_sink_SetPresentationClock(IMFMediaSink *iface, IMFPresentationClock *clock)
@@ -1015,6 +1165,12 @@ static HRESULT video_frame_sink_set_state(struct video_frame_sink *sink, enum si
         {
             if (state == SINK_STATE_STOPPED)
             {
+                if (sink->scheduled_request_sample_cancel_key)
+                {
+                    IMFTimer_CancelTimer(sink->timer, sink->scheduled_request_sample_cancel_key);
+                    IUnknown_Release(sink->scheduled_request_sample_cancel_key);
+                    sink->scheduled_request_sample_cancel_key = NULL;
+                }
                 video_frame_sink_sample_queue_flush(sink);
                 video_frame_sink_set_flag(sink, FLAGS_FIRST_FRAME, FALSE);
                 sink->sample_request_pending = FALSE;
@@ -1022,7 +1178,7 @@ static HRESULT video_frame_sink_set_state(struct video_frame_sink *sink, enum si
 
             if (state == SINK_STATE_RUNNING && (sink->state == SINK_STATE_STOPPED || sink->state == SINK_STATE_PAUSED ||
                     (sink->state == SINK_STATE_RUNNING && offset != PRESENTATION_CURRENT_POSITION)))
-                video_frame_sink_stream_request_sample(sink);
+                video_frame_sink_schedule_request_sample(sink);
 
             if (state != sink->state || state != SINK_STATE_PAUSED)
             {
@@ -1189,6 +1345,7 @@ HRESULT create_video_frame_sink(IMFMediaType *media_type, IUnknown *device_manag
     object->IMFStreamSink_iface.lpVtbl = &video_frame_sink_stream_vtbl;
     object->IMFMediaTypeHandler_iface.lpVtbl = &video_frame_sink_stream_type_handler_vtbl;
     object->IMFGetService_iface.lpVtbl = &video_frame_sink_stream_get_service_vtbl;
+    object->scheduled_request_sample_callback_iface.lpVtbl = &video_frame_sink_scheduled_request_sample_callback_vtbl;
     object->refcount = 1;
     object->rate = 1.0f;
     object->queue.back = ARRAY_SIZE(object->queue.samples) - 1;
