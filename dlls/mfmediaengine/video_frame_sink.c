@@ -69,9 +69,14 @@ enum video_frame_sink_flags
     FLAGS_FIRST_FRAME = 0x1,
 };
 
+#define MAX_QUEUED_SAMPLES 16
+#define DEFAULT_QUEUED_SAMPLES 5
+
+static ULONG queue_size = 0;
+
 struct sample_queue
 {
-    IMFSample *samples[2];
+    IMFSample *samples[MAX_QUEUED_SAMPLES];
     unsigned int used;
     unsigned int front;
     unsigned int back;
@@ -128,7 +133,7 @@ static BOOL video_frame_sink_sample_queue_pop(struct video_frame_sink *sink, IMF
     if (queue->used)
     {
         *sample = queue->samples[queue->front];
-        queue->front = (queue->front + 1) % ARRAY_SIZE(queue->samples);
+        queue->front = (queue->front + 1) % queue_size;
         queue->used--;
     }
     else
@@ -142,7 +147,7 @@ static BOOL video_frame_sink_sample_queue_peek_back(struct video_frame_sink *sin
     struct sample_queue *queue = &sink->queue;
 
     if (queue->used)
-        *sample = queue->samples[(queue->front + queue->used - 1) % ARRAY_SIZE(queue->samples)];
+        *sample = queue->samples[(queue->front + queue->used - 1) % queue_size];
     else
         *sample = NULL;
 
@@ -157,16 +162,16 @@ static void video_frame_sink_sample_queue_push(struct video_frame_sink *sink, IM
     unsigned int idx;
 
     /* if queue is full, we drop the oldest sample to make room for the new one */
-    if (queue->used == ARRAY_SIZE(queue->samples))
+    if (queue->used == queue_size)
     {
         video_frame_sink_sample_queue_pop(sink, &old_sample);
         IMFSample_Release(old_sample);
     }
 
     if (at_front)
-        idx = queue->front = (ARRAY_SIZE(queue->samples) + queue->front - 1) % ARRAY_SIZE(queue->samples);
+        idx = queue->front = (queue_size + queue->front - 1) % queue_size;
     else
-        idx = queue->back = (queue->back + 1) % ARRAY_SIZE(queue->samples);
+        idx = queue->back = (queue->back + 1) % queue_size;
     queue->samples[idx] = sample;
     queue->used++;
 }
@@ -181,7 +186,7 @@ static void video_frame_sink_sample_queue_flush(struct video_frame_sink *sink)
 
     queue->used = 0;
     queue->front = 0;
-    queue->back = ARRAY_SIZE(queue->samples) - 1;
+    queue->back = queue_size - 1;
 
     if (sink->state == SINK_STATE_RUNNING)
         video_frame_sink_stream_request_sample(sink);
@@ -470,7 +475,7 @@ static HRESULT WINAPI video_frame_sink_stream_ProcessSample(IMFStreamSink *iface
             else
                 video_frame_sink_sample_queue_push(sink, sample, FALSE);
 
-            if (sink->queue.used != ARRAY_SIZE(sink->queue.samples))
+            if (sink->queue.used != queue_size)
                 video_frame_sink_stream_request_sample(sink);
             else
                 video_frame_sink_stream_schedule_request_sample(sink, sampletime);
@@ -995,7 +1000,7 @@ static void video_frame_sink_schedule_request_sample(struct video_frame_sink *si
     if (sink->sample_request_pending || sink->eos)
         return;
 
-    if (sink->queue.used == ARRAY_SIZE(sink->queue.samples) &&
+    if (sink->queue.used == queue_size &&
         video_frame_sink_sample_queue_peek_back(sink, &sample) &&
         SUCCEEDED(IMFSample_GetSampleTime(sample, &sampletime)))
         video_frame_sink_stream_schedule_request_sample(sink, sampletime);
@@ -1339,6 +1344,21 @@ HRESULT create_video_frame_sink(IMFMediaType *media_type, IUnknown *device_manag
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
+    if (queue_size == 0)
+    {
+        const char *env = getenv("WINE_MFME_VIDEO_QUEUE_SIZE");
+        if (env)
+        {
+            int n = atoi(env);
+            queue_size = n > 0 ? n : 0;
+        }
+    }
+
+    if (queue_size == 0)
+        queue_size = DEFAULT_QUEUED_SAMPLES;
+    if (queue_size > MAX_QUEUED_SAMPLES)
+        queue_size = MAX_QUEUED_SAMPLES;
+
     object->IMFMediaSink_iface.lpVtbl = &video_frame_sink_vtbl;
     object->IMFClockStateSink_iface.lpVtbl = &video_frame_sink_clock_sink_vtbl;
     object->IMFMediaEventGenerator_iface.lpVtbl = &video_frame_sink_events_vtbl;
@@ -1348,7 +1368,7 @@ HRESULT create_video_frame_sink(IMFMediaType *media_type, IUnknown *device_manag
     object->scheduled_request_sample_callback_iface.lpVtbl = &video_frame_sink_scheduled_request_sample_callback_vtbl;
     object->refcount = 1;
     object->rate = 1.0f;
-    object->queue.back = ARRAY_SIZE(object->queue.samples) - 1;
+    object->queue.back = queue_size - 1;
     if ((object->device_manager = device_manager))
         IUnknown_AddRef(object->device_manager);
     object->media_type = media_type;
