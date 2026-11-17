@@ -1416,7 +1416,9 @@ static HRESULT media_engine_create_topology(struct media_engine *engine, IMFMedi
     if (SUCCEEDED(IMFPresentationDescriptor_GetUINT64(pd, &MF_PD_DURATION, &duration)))
         engine->duration = mftime_to_seconds(duration);
     else
-        engine->duration = INFINITY;
+        /* AVPro Video never reports playback start for live streams with an
+         * infinite duration. */
+        engine->duration = NAN;
 
     if (SUCCEEDED(hr = MFCreateTopology(&topology)))
     {
